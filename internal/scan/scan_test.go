@@ -131,3 +131,101 @@ func TestScanMissingRoot(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestScanHardlinkCountedOnce(t *testing.T) {
+	root := fixture(t)
+	f2 := filepath.Join(root, "a", "b", "f2")
+	if err := os.Link(f2, filepath.Join(root, "f2link")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Scan(context.Background(), []string{root}, Options{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// du() counts the hard link twice; scan must count it once.
+	if got, want := res.Roots[0].Size, du(t, root)-du(t, f2); got != want {
+		t.Errorf("size = %d, want %d", got, want)
+	}
+	if res.Files != 3 {
+		t.Errorf("files = %d, want 3", res.Files)
+	}
+}
+
+func TestScanSymlinkNotFollowed(t *testing.T) {
+	root := fixture(t)
+	outside, _ := filepath.EvalSymlinks(t.TempDir())
+	writeFile(t, filepath.Join(outside, "big"), 1_000_000)
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Scan(context.Background(), []string{root}, Options{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := res.Roots[0].Size, du(t, root); got != want {
+		t.Errorf("size = %d, want %d (symlink target must not count)", got, want)
+	}
+}
+
+func TestScanExclude(t *testing.T) {
+	root := fixture(t)
+	a := filepath.Join(root, "a")
+	res, err := Scan(context.Background(), []string{root}, Options{Exclude: []string{a}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range res.Roots[0].Children {
+		if c.Name == "a" {
+			t.Error("excluded dir present")
+		}
+	}
+	if got, want := res.Roots[0].Size, du(t, root)-du(t, a); got != want {
+		t.Errorf("size = %d, want %d", got, want)
+	}
+}
+
+func TestScanPermissionErrorIsNotFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permissions")
+	}
+	root := fixture(t)
+	locked := filepath.Join(root, "locked")
+	writeFile(t, filepath.Join(locked, "x"), 1000)
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+
+	res, err := Scan(context.Background(), []string{root}, Options{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ErrorCount < 1 || len(res.Errors) < 1 {
+		t.Errorf("errors = %d, want >= 1", res.ErrorCount)
+	}
+}
+
+func TestScanCancelled(t *testing.T) {
+	root := fixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Scan(ctx, []string{root}, Options{}, nil); err != context.Canceled {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestScanSendsProgress(t *testing.T) {
+	root := fixture(t)
+	ch := make(chan Progress, 1)
+	if _, err := Scan(context.Background(), []string{root}, Options{}, ch); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-ch:
+		if p.Files == 0 {
+			t.Errorf("progress = %+v", p)
+		}
+	default:
+		t.Error("no progress sent")
+	}
+}
