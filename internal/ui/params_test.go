@@ -26,6 +26,36 @@ func TestParseRoots(t *testing.T) {
 	}
 }
 
+func TestParseRootsNormalizes(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	if err := os.Mkdir("sub", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := parseRoots("sub, " + tmp + "/sub/, ~/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(tmp, "sub"), home}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("got %v, want %v (relative made absolute, duplicates dropped)", got, want)
+	}
+	_, err = parseRoots("nope-missing")
+	if err == nil || err.Error() != "nope-missing: not found" {
+		t.Errorf("err = %v, want message naming the typed path", err)
+	}
+}
+
+func TestTildify(t *testing.T) {
+	cases := map[string]string{"/Users/a": "~", "/Users/a/x": "~/x", "/Users/ab": "/Users/ab", "/tmp": "/tmp"}
+	for in, want := range cases {
+		if got := tildify(in, "/Users/a"); got != want {
+			t.Errorf("tildify(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestFormValuesParams(t *testing.T) {
 	tmp := t.TempDir()
 	v := &formValues{roots: tmp, min: "1MB", typ: tree.Files}

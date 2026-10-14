@@ -9,7 +9,7 @@ type styles struct {
 func newStyles(isDark bool) styles {
 	ld := lipgloss.LightDark(isDark)
 	accent := ld(lipgloss.Color("#D7005F"), lipgloss.Color("#FF5FAF"))
-	subtle := ld(lipgloss.Color("#8A8A8A"), lipgloss.Color("#6C6C6C"))
+	subtle := ld(lipgloss.Color("#6C6C6C"), lipgloss.Color("#8A8A8A"))
 	return styles{
 		title:    lipgloss.NewStyle().Bold(true).Foreground(accent),
 		subtle:   lipgloss.NewStyle().Foreground(subtle),
