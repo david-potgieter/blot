@@ -21,7 +21,12 @@ const (
 
 var typeNames = [...]string{"all", "dirs", "files"}
 
-func (t Type) String() string { return typeNames[t] }
+func (t Type) String() string {
+	if t < 0 || int(t) >= len(typeNames) {
+		return fmt.Sprintf("Type(%d)", int(t))
+	}
+	return typeNames[t]
+}
 
 // ParseType parses "all", "dirs" or "files".
 func ParseType(s string) (Type, error) {
@@ -120,12 +125,19 @@ func (t *Tree) visit(n *scan.Node) bool {
 	return n.IsDir && len(kids) > 0
 }
 
-func (t *Tree) Filter() Filter      { return t.filter }
-func (t *Tree) Sort() SortBy        { return t.sort }
-func (t *Tree) MatchCount() int     { return t.matches }
+// Filter returns the filter the tree was built with.
+func (t *Tree) Filter() Filter { return t.filter }
+
+// Sort returns the current sibling order.
+func (t *Tree) Sort() SortBy { return t.sort }
+
+// MatchCount is the number of nodes matching the filter.
+func (t *Tree) MatchCount() int { return t.matches }
+
+// Roots returns the roots in the order given; they are never re-sorted.
 func (t *Tree) Roots() []*scan.Node { return t.roots }
 
-// SetSort reorders all visible children.
+// SetSort reorders all visible children (not roots).
 func (t *Tree) SetSort(s SortBy) {
 	t.sort = s
 	t.sortAll()
@@ -138,13 +150,16 @@ func (t *Tree) sortAll() {
 }
 
 func (t *Tree) compare(a, b *scan.Node) int {
-	if t.sort == ByName {
-		return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	if t.sort == BySize {
+		if c := cmp.Compare(b.Size, a.Size); c != 0 {
+			return c
+		}
 	}
-	if c := cmp.Compare(b.Size, a.Size); c != 0 {
-		return c
-	}
-	return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	// Exact name breaks case-only ties, since scan order varies between runs.
+	return cmp.Or(
+		cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)),
+		cmp.Compare(a.Name, b.Name),
+	)
 }
 
 // Expand opens n if it has visible children.

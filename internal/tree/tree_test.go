@@ -108,6 +108,31 @@ func TestRootBelowThresholdStillShown(t *testing.T) {
 	}
 }
 
+func TestFilesTypeHidesBigDirWithoutBigFiles(t *testing.T) {
+	root := dir("root", 1000,
+		dir("many", 500, file("x", 10), file("y", 10)),
+		dir("one", 450, file("big", 420)),
+	)
+	tr := New([]*scan.Node{root}, Filter{Min: 400, Type: Files})
+	expandAll(tr)
+	eq(t, names(tr.Rows()), []string{"root", "one", "big"})
+}
+
+func TestMultipleRootsAndMinZero(t *testing.T) {
+	r1 := dir("r1", 10, file("a", 4), file("b", 6))
+	r2 := dir("r2", 3, dir("c", 1))
+	tr := New([]*scan.Node{r1, r2}, Filter{Min: 0, Type: All})
+	eq(t, names(tr.Rows()), []string{"r1", "b", "a", "r2", "c"})
+	if tr.MatchCount() != 5 {
+		t.Errorf("matches = %d, want 5", tr.MatchCount())
+	}
+}
+
+func TestSortTiesDeterministic(t *testing.T) {
+	tr := New([]*scan.Node{dir("r", 10, file("b", 2), file("B", 2), file("a", 2))}, Filter{})
+	eq(t, names(tr.Rows()), []string{"r", "a", "B", "b"})
+}
+
 func TestCollapseAndDepth(t *testing.T) {
 	tr := New([]*scan.Node{sample()}, Filter{Min: 280, Type: All})
 	expandAll(tr)
