@@ -2,9 +2,11 @@ package scan
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
 )
@@ -211,6 +213,48 @@ func TestScanCancelled(t *testing.T) {
 	cancel()
 	if _, err := Scan(ctx, []string{root}, Options{}, nil); err != context.Canceled {
 		t.Errorf("err = %v, want context.Canceled", err)
+	}
+}
+
+// cancelAfter reports Canceled once Err has been called more than limit times.
+type cancelAfter struct {
+	context.Context
+	calls atomic.Int64
+	limit int64
+}
+
+func (c *cancelAfter) Err() error {
+	if c.calls.Add(1) > c.limit {
+		return context.Canceled
+	}
+	return nil
+}
+
+func TestScanCancelledMidWalk(t *testing.T) {
+	root := fixture(t)
+	ctx := &cancelAfter{Context: context.Background(), limit: 3}
+	if _, err := Scan(ctx, []string{root}, Options{}, nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
+	}
+	if ctx.calls.Load() <= 2 {
+		t.Error("walk never checked ctx")
+	}
+}
+
+func TestScanExcludeResolvesSymlinks(t *testing.T) {
+	root := fixture(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Scan(context.Background(), []string{root}, Options{Exclude: []string{filepath.Join(alias, "a")}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range res.Roots[0].Children {
+		if c.Name == "a" {
+			t.Error("exclude given via symlinked path was not applied")
+		}
 	}
 }
 

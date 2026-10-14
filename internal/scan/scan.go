@@ -3,6 +3,7 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -82,6 +83,10 @@ func Scan(ctx context.Context, roots []string, opts Options, progress chan<- Pro
 	}
 	s := &scanner{opts: opts, excluded: map[string]bool{}}
 	for _, e := range opts.Exclude {
+		// Roots are symlink-resolved, so excludes must be too (/tmp → /private/tmp).
+		if real, err := filepath.EvalSymlinks(e); err == nil {
+			e = real
+		}
 		s.excluded[filepath.Clean(e)] = true
 	}
 
@@ -152,6 +157,9 @@ func (s *scanner) scanRoot(ctx context.Context, root string) (*Node, error) {
 		return nil, err
 	}
 	n := s.nodes[real]
+	if n == nil {
+		return nil, fmt.Errorf("%s: could not read", real)
+	}
 	sumDirs(n)
 	return n, nil
 }
@@ -172,14 +180,21 @@ func (s *scanner) walkFn(ctx context.Context, root string, dev uint64) fs.WalkDi
 			}
 			return nil
 		}
+		// A dir without a Node would orphan its subtree, so skip it.
+		skip := func() error {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			s.addErr(err)
-			return nil
+			return skip()
 		}
 		st, ok := info.Sys().(*syscall.Stat_t)
 		if !ok {
-			return nil
+			return skip()
 		}
 		usage := st.Blocks * 512
 		if d.IsDir() {
