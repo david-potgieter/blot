@@ -2,7 +2,7 @@
 
 Go TUI to find files and folders on macOS over a size threshold. Built on Charm libs. Open-source ready (MIT).
 
-Module: `github.com/david-potgieter/heft` · binary: `heft` · Go 1.25
+Module: `github.com/david-potgieter/heft` · binary: `heft` · Go 1.26
 
 ## Scope v1
 

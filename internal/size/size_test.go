@@ -14,6 +14,7 @@ func TestParse(t *testing.T) {
 		{"1024", 1024, true},
 		{"", 0, false},
 		{"abc", 0, false},
+		{"10EiB", 0, false},
 	}
 	for _, c := range cases {
 		got, err := Parse(c.in)
