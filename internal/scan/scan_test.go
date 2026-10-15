@@ -96,6 +96,81 @@ func TestScanSizes(t *testing.T) {
 	}
 }
 
+func TestRemove(t *testing.T) {
+	root := fixture(t)
+	other := fixture(t)
+	job := Start(context.Background(), []string{root, other}, Options{FileFloor: 100_000})
+	before, err := job.Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(root, "a")
+	aSize := du(t, a)
+	aFiles := du(t, filepath.Join(a, "f1")) + du(t, filepath.Join(a, "b", "f2"))
+
+	job.Remove(a, filepath.Join(other, "f3"), root, "/nope", filepath.Join(root, "missing"))
+	got := job.Snapshot(0)
+	if got[0].Size != du(t, root)-aSize {
+		t.Errorf("root size = %d, want %d", got[0].Size, du(t, root)-aSize)
+	}
+	for _, c := range got[0].Children {
+		if c.Name == "a" {
+			t.Error("a still in tree")
+		}
+	}
+	// f3 is below the floor, so it has no node and stays counted.
+	if got[1].Size != du(t, other) {
+		t.Errorf("other size = %d, want unchanged %d", got[1].Size, du(t, other))
+	}
+	p := job.Progress()
+	if p.Files != before.Files-2 || p.Dirs != before.Dirs-2 || p.Bytes != before.Bytes-aFiles {
+		t.Errorf("files=%d dirs=%d bytes=%d, want %d %d %d",
+			p.Files, p.Dirs, p.Bytes, before.Files-2, before.Dirs-2, before.Bytes-aFiles)
+	}
+
+	f2 := filepath.Join(other, "a", "b", "f2") // a file with a node
+	job.Remove(f2)
+	if got := job.Snapshot(0)[1]; got.Size != du(t, other)-du(t, f2) {
+		t.Errorf("other size after file removal = %d", got.Size)
+	}
+}
+
+func TestRestore(t *testing.T) {
+	root := fixture(t)
+	orig := Start(context.Background(), []string{root}, Options{FileFloor: 100_000})
+	if _, err := orig.Result(); err != nil {
+		t.Fatal(err)
+	}
+	job := Restore(orig.Snapshot(0), orig.Progress(), 100_000)
+	select {
+	case <-job.Done():
+	default:
+		t.Fatal("restored job not done")
+	}
+	if got, want := fmt.Sprint(tree(job.Snapshot(0)[0])), fmt.Sprint(tree(orig.Snapshot(0)[0])); got != want {
+		t.Errorf("restored tree\n%s\nwant\n%s", got, want)
+	}
+	want := orig.Progress()
+	want.Current = "" // nothing is being walked
+	if job.Progress() != want {
+		t.Errorf("progress = %+v, want %+v", job.Progress(), want)
+	}
+	a := filepath.Join(root, "a")
+	job.Remove(a) // works on a restored job, and file counts came across
+	if p := job.Progress(); p.Files != 1 || p.Dirs != 1 {
+		t.Errorf("after remove files=%d dirs=%d, want 1, 1", p.Files, p.Dirs)
+	}
+}
+
+// tree lists path=size/files for n and everything under it.
+func tree(n *Node) []string {
+	out := []string{fmt.Sprintf("%s=%d/%d/%d", n.Path, n.Size, n.Files, n.FileBytes)}
+	for _, c := range n.Children {
+		out = append(out, tree(c)...)
+	}
+	return out
+}
+
 func TestScanFileFloorPrunesSmallFiles(t *testing.T) {
 	root := fixture(t)
 	res, err := Scan(context.Background(), []string{root}, Options{FileFloor: 100_000}, nil)
@@ -205,6 +280,21 @@ func TestScanPermissionErrorIsNotFatal(t *testing.T) {
 	}
 	if res.ErrorCount < 1 || len(res.Errors) < 1 {
 		t.Errorf("errors = %d, want >= 1", res.ErrorCount)
+	}
+}
+
+func TestScanUnreadableRootFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores permissions")
+	}
+	root := fixture(t)
+	if err := os.Chmod(root, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(root, 0o755) })
+
+	if _, err := Scan(context.Background(), []string{root}, Options{}, nil); err == nil {
+		t.Error("expected an error for an unreadable root, not an empty result")
 	}
 }
 

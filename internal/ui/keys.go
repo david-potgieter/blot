@@ -19,7 +19,7 @@ func newTreeKeys() treeKeys {
 		Sort:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
 		Reveal:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "reveal")),
 		Rescan:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
-		Search:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "search")),
+		Search:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "pane")),
 		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
@@ -28,13 +28,27 @@ func (k treeKeys) ShortHelp() []key.Binding {
 	return []key.Binding{k.Up, k.Down, k.Expand, k.Collapse, k.Sort, k.Reveal, k.Rescan, k.Search, k.Quit}
 }
 
-// formHelp is the help line while the search pane has focus.
-func formHelp() []key.Binding {
+// dialogHelp is the help line while a dialog is open.
+func dialogHelp() []key.Binding {
 	return []key.Binding{
-		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab/↑↓", "field")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "choose")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}
+}
+
+// formHelp is the help line while the search pane has focus. While a folder
+// completion is showing, tab completes it instead of moving to the next pane.
+func formHelp(completing bool) []key.Binding {
+	tab := key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "pane"))
+	if completing {
+		tab = key.NewBinding(key.WithKeys("tab", "ctrl+n"), key.WithHelp("tab/^n", "complete/next"))
+	}
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "field")),
 		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "search/cancel")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "results")),
+		tab,
 		key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 	}
 }

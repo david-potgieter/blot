@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -20,13 +22,15 @@ const maxErrors = 100
 // Node is a file or directory. Dir sizes are recursive disk usage.
 // Nodes returned by Snapshot or Result are copies, safe to read freely.
 type Node struct {
-	Name     string
-	Path     string
-	IsDir    bool
-	Size     int64 // bytes on disk (st_blocks*512)
-	ModTime  time.Time
-	Parent   *Node
-	Children []*Node
+	Name      string
+	Path      string
+	IsDir     bool
+	Size      int64 // bytes on disk (st_blocks*512)
+	Files     int64 // files at or under this node, including those below FileFloor
+	FileBytes int64 // their usage (Size also counts dirs)
+	ModTime   time.Time
+	Parent    *Node
+	Children  []*Node
 }
 
 // Options control a scan.
@@ -55,6 +59,8 @@ type live struct {
 	name, path string
 	isDir      bool
 	size       int64 // recursive; updated on discovery so partial totals are consistent
+	files      int64 // recursive count of files seen, including those below FileFloor
+	fileBytes  int64 // recursive usage of those files (size also counts dirs)
 	mod        time.Time
 	parent     *live
 	children   []*live
@@ -139,6 +145,31 @@ func send(ch chan<- Progress, p Progress) {
 	}
 }
 
+// Restore rebuilds a finished job from a tree taken with Snapshot (e.g. saved
+// between runs) and its totals, so it can be filtered, snapshotted and pruned
+// with Remove like a fresh scan. The tree is copied.
+func Restore(roots []*Node, totals Progress, floor int64) *Job {
+	s := &Job{opts: Options{FileFloor: floor}, done: make(chan struct{})}
+	var build func(n *Node, parent *live) *live
+	build = func(n *Node, parent *live) *live {
+		l := &live{name: n.Name, path: n.Path, isDir: n.IsDir, size: n.Size, files: n.Files, fileBytes: n.FileBytes, mod: n.ModTime, parent: parent}
+		for _, c := range n.Children {
+			l.children = append(l.children, build(c, l))
+		}
+		return l
+	}
+	for _, r := range roots {
+		s.roots = append(s.roots, build(r, nil))
+	}
+	s.files.Store(totals.Files)
+	s.dirs.Store(totals.Dirs)
+	s.bytes.Store(totals.Bytes)
+	s.errCount.Store(totals.Errors)
+	s.res = &Result{Roots: s.Snapshot(floor), Files: totals.Files, Dirs: totals.Dirs, Bytes: totals.Bytes, ErrorCount: totals.Errors}
+	close(s.done)
+	return s
+}
+
 // Done is closed when the scan finishes, fails or is cancelled.
 func (s *Job) Done() <-chan struct{} { return s.done }
 
@@ -171,7 +202,7 @@ func (s *Job) Snapshot(min int64) []*Node {
 }
 
 func copyNode(l *live, parent *Node, min int64) *Node {
-	n := &Node{Name: l.name, Path: l.path, IsDir: l.isDir, Size: l.size, ModTime: l.mod, Parent: parent}
+	n := &Node{Name: l.name, Path: l.path, IsDir: l.isDir, Size: l.size, Files: l.files, FileBytes: l.fileBytes, ModTime: l.mod, Parent: parent}
 	for _, c := range l.children {
 		if c.size >= min {
 			n.Children = append(n.Children, copyNode(c, n, min))
@@ -220,7 +251,8 @@ func (s *Job) scanRoot(ctx context.Context, root string) error {
 		s.files.Add(1)
 		s.bytes.Add(st.Blocks * 512)
 		s.mu.Lock()
-		s.roots = append(s.roots, &live{name: real, path: real, size: st.Blocks * 512, mod: info.ModTime()})
+		usage := st.Blocks * 512
+		s.roots = append(s.roots, &live{name: real, path: real, size: usage, files: 1, fileBytes: usage, mod: info.ModTime()})
 		s.mu.Unlock()
 		return nil
 	}
@@ -260,11 +292,14 @@ func (s *Job) walkFn(ctx context.Context, root string, devs map[uint64]bool) fs.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
+		path = filepath.Clean(path)
 		if err != nil {
+			if path == root {
+				return err // an unreadable root would otherwise look empty
+			}
 			s.addErr(err)
 			return nil
 		}
-		path = filepath.Clean(path)
 		if path != root && s.excluded[path] {
 			if d.IsDir() {
 				return fs.SkipDir
@@ -339,9 +374,71 @@ func (s *Job) addFile(path string, mod time.Time, usage int64) {
 		return
 	}
 	if usage >= s.opts.FileFloor {
-		p.children = append(p.children, &live{name: filepath.Base(path), path: path, size: usage, mod: mod, parent: p})
+		p.children = append(p.children, &live{name: filepath.Base(path), path: path, size: usage, files: 1, fileBytes: usage, mod: mod, parent: p})
 	}
-	grow(p, usage)
+	for n := p; n != nil; n = n.parent {
+		n.size += usage
+		n.files++
+		n.fileBytes += usage
+	}
+}
+
+// Remove drops paths and everything under them, e.g. after they were deleted
+// or moved to the Bin, taking their usage off every ancestor and the totals.
+// Roots and paths not in the tree are ignored.
+func (s *Job) Remove(paths ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, p := range paths {
+		for _, r := range s.roots { // overlapping roots may each hold it
+			n := find(r, filepath.Clean(p))
+			if n == nil {
+				continue
+			}
+			parent := n.parent
+			parent.children = slices.DeleteFunc(parent.children, func(c *live) bool { return c == n })
+			for a := parent; a != nil; a = a.parent {
+				a.size -= n.size
+				a.files -= n.files
+				a.fileBytes -= n.fileBytes
+			}
+			s.files.Add(-n.files)
+			s.bytes.Add(-n.fileBytes)
+			s.dirs.Add(-s.forget(n))
+		}
+	}
+}
+
+// find returns the node at path strictly below root r, or nil.
+func find(r *live, path string) *live {
+	rel, err := filepath.Rel(r.path, path)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return nil
+	}
+	n := r
+	for _, name := range strings.Split(rel, "/") {
+		i := slices.IndexFunc(n.children, func(c *live) bool { return c.name == name })
+		if i < 0 {
+			return nil
+		}
+		n = n.children[i]
+	}
+	return n
+}
+
+// forget unindexes n's dirs and returns how many there were. Caller holds s.mu.
+func (s *Job) forget(n *live) int64 {
+	if !n.isDir {
+		return 0
+	}
+	if s.nodes[n.path] == n {
+		delete(s.nodes, n.path)
+	}
+	dirs := int64(1)
+	for _, c := range n.children {
+		dirs += s.forget(c)
+	}
+	return dirs
 }
 
 func (s *Job) firstLink(k inode) bool {

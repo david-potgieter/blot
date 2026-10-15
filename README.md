@@ -30,11 +30,14 @@ heft ~/Work ~/Downloads --min 1GB --type files --no-form
 
 ### Keys
 
-Search pane (left):
+`tab` / `shift+tab` move between panes: Search, Bin, Results.
+
+Search pane (top left):
 
 | key | action |
 |---|---|
-| `tab`/`↓`, `shift+tab`/`↑` | next / previous field |
+| `↓` / `↑` | next / previous field |
+| `tab` | in *Folders*: complete the folder name being typed (`ctrl+n`/`ctrl+p` for other matches) |
 | `←`/`→` | change *Show* (files & folders, folders, files) |
 | `enter` | press the button: **Search**, or **Cancel** while scanning |
 | `esc` | go to results |
@@ -50,13 +53,29 @@ Results pane (right):
 | `g` / `G` | top / bottom |
 | `s` | sort by size or name |
 | `o` | reveal in Finder |
-| `r` | rescan |
-| `tab` | go to search |
+| `r` | rescan from the focused folder, or everything |
+| `q` / `ctrl+c` | quit |
+
+Bin pane (bottom left) shows what's in the Trash, biggest first:
+
+| key | action |
+|---|---|
+| `↑`/`k` `↓`/`j` | move |
+| `o` | reveal in Finder |
+| `r` | measure again |
+| `enter` | without Full Disk Access: offer to open System Settings |
 | `q` / `ctrl+c` | quit |
 
 Lowering the minimum size below what was scanned (1MB, or your minimum if smaller), or changing
 folders, needs a rescan; the results header says so. Terminals narrower than 90 columns show one
 pane at a time.
+
+### Sessions
+
+Quitting saves the whole view (search, results, open folders, cursor) to
+`~/Library/Caches/heft/`. Running plain `heft` again shows it as you left it, marked
+"saved … ago", without rescanning; press `r` or Search to rescan. Passing any paths or
+flags starts fresh.
 
 ### Notes
 

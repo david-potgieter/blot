@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -25,12 +28,15 @@ const (
 	narrowWidth  = 90        // below this only the focused pane is shown
 	maxFloor     = 1_000_000 // scans keep files down to min(min size, 1MB)
 	tickInterval = 250 * time.Millisecond
+	minBinHeight = 5 // smallest Bin pane worth showing, including border
 )
 
+// focus is a pane; the order is the tab order.
 type focus int
 
 const (
 	focusForm focus = iota
+	focusBin
 	focusResults
 )
 
@@ -41,6 +47,9 @@ type Config struct {
 	Type     string // all | dirs | files
 	SkipForm bool   // start scanning immediately
 	Excludes []string
+	Bin      string // Trash folder; defaults to ~/.Trash
+	Session  string // file the view is saved to on quit; "" disables saving
+	Restore  bool   // start from the saved session, if there is a usable one
 }
 
 type (
@@ -48,10 +57,11 @@ type (
 	jobDoneMsg struct{ id int }
 )
 
-// App is the root model: search form on the left, live results on the right.
+// App is the root model: search form over the Bin on the left, live results on the right.
 type App struct {
 	cfg    Config
 	form   formModel
+	bin    binModel
 	tree   treeModel
 	focus  focus
 	help   help.Model
@@ -70,6 +80,9 @@ type App struct {
 	progress  scan.Progress
 	err       error // scan failed outright (e.g. a root became unreadable)
 	filter    tree.Filter
+	dialog    *dialog // modal over everything while open
+	scannedAt time.Time
+	restored  bool // results come from a saved session, not a scan in this run
 
 	width, height int
 	initCmd       tea.Cmd
@@ -85,10 +98,20 @@ func New(cfg Config) (*App, error) {
 	a := &App{
 		cfg:    cfg,
 		form:   newFormModel(formValues{roots: cfg.Roots, min: cfg.Min, typ: typ}, st),
+		bin:    newBinModel(st),
 		tree:   newTreeModel(st),
 		help:   help.New(),
 		styles: st,
 		isDark: true,
+	}
+	if a.cfg.Bin == "" {
+		a.cfg.Bin = filepath.Join(a.tree.home, ".Trash")
+	}
+	if cfg.Restore && cfg.Session != "" {
+		if s, err := readSession(cfg.Session); err == nil {
+			a.initCmd = a.restore(s)
+			return a, nil
+		}
 	}
 	if cfg.SkipForm {
 		v := a.form.values()
@@ -103,7 +126,14 @@ func New(cfg Config) (*App, error) {
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, a.initCmd)
+	return tea.Batch(tea.RequestBackgroundColor, a.initCmd, a.refreshBin(), pollBin(a.cfg.Bin))
+}
+
+// refreshBin re-measures the Bin, keeping the old figures until it's done.
+func (a *App) refreshBin() tea.Cmd {
+	a.bin.id++
+	a.bin.measuring = true
+	return measureBin(a.cfg.Bin, a.bin.id)
 }
 
 // startScan cancels any running scan and starts one from the form values.
@@ -120,12 +150,71 @@ func (a *App) startScan() tea.Cmd {
 	a.jobID++
 	a.cancel = cancel
 	a.jobParams = p
-	a.scanning, a.cancelled = true, false
+	a.scanning, a.cancelled, a.restored = true, false, false
 	a.form.scanning = true
 	a.snapshot, a.progress, a.err = nil, scan.Progress{}, nil
 	a.tree.setTree(nil) // new search: fresh expansion state
 	a.rebuild(true)
 	return tea.Batch(a.setFocus(focusResults), tick(a.jobID), waitJob(a.job, a.jobID))
+}
+
+// quit stops any scan and saves the view for next time. Saving is best effort:
+// failing to save must never stop heft from quitting.
+func (a *App) quit() tea.Cmd {
+	a.stopScan()
+	if a.cfg.Session != "" {
+		_ = writeSession(a.cfg.Session, a.session())
+	}
+	return tea.Quit
+}
+
+// session captures the form, results and view as they are now. A scan still
+// running is saved as cancelled, with what it has found so far.
+func (a *App) session() *session {
+	v := a.form.values()
+	s := &session{Version: sessionVersion, Roots: v.roots, Min: v.min, Type: v.typ, Field: a.form.focus, Focus: a.focus}
+	if a.job == nil {
+		return s
+	}
+	s.Scanned, s.ScannedAt = true, a.scannedAt
+	if s.ScannedAt.IsZero() {
+		s.ScannedAt = time.Now()
+	}
+	s.Params, s.Floor, s.Cancelled = a.jobParams, a.floor, a.cancelled
+	s.Totals = a.job.Progress()
+	s.Totals.Current = ""
+	s.Nodes = flatten(a.job.Snapshot(a.floor)) // everything kept, so filters still work
+	if t := a.tree.tree; t != nil {
+		s.Sort, s.Expanded = t.Sort(), t.ExpandedPaths()
+	}
+	if n := a.tree.current(); n != nil {
+		s.Cursor = n.Path
+	}
+	s.Offset = a.tree.offset
+	return s
+}
+
+// restore puts a saved session back on screen, without scanning.
+func (a *App) restore(s *session) tea.Cmd {
+	a.form.roots.SetValue(s.Roots)
+	a.form.suggest()
+	a.form.min.SetValue(s.Min)
+	a.form.typ, a.form.focus = s.Type, s.Field
+	if roots, err := unflatten(s.Nodes); err == nil && s.Scanned {
+		a.job = scan.Restore(roots, s.Totals, s.Floor)
+		a.jobID++
+		a.jobParams, a.floor, a.cancelled = s.Params, s.Floor, s.Cancelled
+		a.progress, a.scannedAt, a.restored = s.Totals, s.ScannedAt, true
+		a.tree.tree = tree.Rebuild(nil, tree.Filter{}, s.Sort, s.Expanded) // carries sort and expansion into rebuild
+		a.rebuild(true)
+		a.tree.follow(s.Cursor)
+		a.tree.wantOffset = s.Offset
+	}
+	f := s.Focus
+	if f == focusResults && a.job == nil {
+		f = focusForm
+	}
+	return a.setFocus(f)
 }
 
 // stopScan cancels the running scan; its jobDoneMsg finalises the partial result.
@@ -147,10 +236,52 @@ func waitJob(job *scan.Job, id int) tea.Cmd {
 	}
 }
 
+// goneMsg lists result paths that no longer exist on disk.
+type goneMsg struct {
+	id    int
+	paths []string
+}
+
+// findGone checks the shown results (a snapshot copy, safe to read here) for
+// paths deleted or moved since the scan, skipping anything under a gone dir.
+func findGone(roots []*scan.Node, id int) tea.Cmd {
+	return func() tea.Msg {
+		var gone []string
+		var walk func(n *scan.Node)
+		walk = func(n *scan.Node) {
+			for _, c := range n.Children {
+				if _, err := os.Lstat(c.Path); errors.Is(err, fs.ErrNotExist) {
+					gone = append(gone, c.Path)
+				} else if c.IsDir {
+					walk(c)
+				}
+			}
+		}
+		for _, r := range roots {
+			walk(r)
+		}
+		return goneMsg{id, gone}
+	}
+}
+
 func (a *App) setFocus(f focus) tea.Cmd {
 	a.focus = f
+	a.bin.focused = f == focusBin
 	a.layout() // in narrow mode the visible pane depends on focus
 	return a.form.setFocused(f == focusForm)
+}
+
+// cycleFocus moves step panes along the tab order, skipping hidden or empty ones.
+func (a *App) cycleFocus(step int) tea.Cmd {
+	ps := []focus{focusForm}
+	if _, bh := a.leftHeights(); bh > 0 {
+		ps = append(ps, focusBin)
+	}
+	if a.job != nil {
+		ps = append(ps, focusResults)
+	}
+	i := slices.Index(ps, a.focus)
+	return a.setFocus(ps[((i+step)%len(ps)+len(ps))%len(ps)])
 }
 
 // currentFilter applies the form's min size and type to existing results.
@@ -201,12 +332,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.layout()
+		if _, bh := a.leftHeights(); bh == 0 && a.focus == focusBin {
+			return a, a.setFocus(focusForm) // the Bin no longer fits
+		}
 		return a, nil
 
 	case tea.BackgroundColorMsg:
 		a.isDark = msg.IsDark()
 		a.styles = newStyles(a.isDark)
-		a.form.styles, a.tree.styles = a.styles, a.styles
+		a.form.styles, a.bin.styles, a.tree.styles = a.styles, a.styles, a.styles
 		a.form.roots.SetStyles(textinput.DefaultStyles(a.isDark))
 		a.form.min.SetStyles(textinput.DefaultStyles(a.isDark))
 		return a, nil
@@ -226,6 +360,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		res, err := a.job.Result()
 		a.cancel()
 		a.scanning = false
+		a.scannedAt = time.Now()
 		a.form.scanning = false
 		// Trust the job, not the cancel flag: it may have finished first.
 		a.cancelled = errors.Is(err, context.Canceled)
@@ -236,7 +371,34 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.progress = scan.Progress{Files: res.Files, Dirs: res.Dirs, Bytes: res.Bytes, Errors: res.ErrorCount}
 		}
 		a.rebuild(true)
+		return a, a.refreshBin()
+
+	case binMsg:
+		if msg.id != a.bin.id {
+			return a, nil
+		}
+		a.bin.set(msg)
+		if a.job == nil {
+			return a, nil
+		}
+		// Whatever went to the Bin is likely in the results too.
+		return a, findGone(a.snapshot, a.jobID)
+
+	case goneMsg:
+		if msg.id != a.jobID || len(msg.paths) == 0 {
+			return a, nil
+		}
+		a.job.Remove(msg.paths...)
+		a.progress = a.job.Progress()
+		a.rebuild(true)
 		return a, nil
+
+	case binPollMsg:
+		// Something was trashed or emptied since the last measurement.
+		if !a.bin.measuring && !msg.mod.Equal(a.bin.mod) {
+			return a, tea.Batch(a.refreshBin(), pollBin(a.cfg.Bin))
+		}
+		return a, pollBin(a.cfg.Bin)
 
 	case submitMsg:
 		// While scanning the button cancels, unless the form now asks for a
@@ -249,8 +411,39 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
-			a.stopScan()
-			return a, tea.Quit
+			return a, a.quit()
+		}
+		if d := a.dialog; d != nil {
+			cmd, done := d.update(msg)
+			if done && a.dialog == d { // onPick may have opened another
+				a.dialog = nil
+			}
+			return a, cmd
+		}
+		switch msg.String() {
+		case "tab":
+			if a.focus == focusForm && a.form.canComplete() {
+				break // the form completes the folder
+			}
+			return a, a.cycleFocus(1)
+		case "shift+tab":
+			return a, a.cycleFocus(-1)
+		}
+		if a.focus == focusBin {
+			switch msg.String() {
+			case "q":
+				return a, a.quit()
+			case "r":
+				return a, a.refreshBin()
+			case "enter":
+				if a.bin.noAccess() {
+					a.dialog = a.accessDialog()
+					return a, nil
+				}
+			}
+			var cmd tea.Cmd
+			a.bin, cmd = a.bin.Update(msg)
+			return a, cmd
 		}
 		if a.focus == focusForm {
 			if msg.String() == "esc" && a.job != nil {
@@ -263,12 +456,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		}
 		switch msg.String() {
-		case "tab":
-			return a, a.setFocus(focusForm)
 		case "q":
-			a.stopScan()
-			return a, tea.Quit
+			return a, a.quit()
 		case "r":
+			if n := a.tree.current(); n != nil {
+				a.dialog = a.rescanDialog(n)
+				return a, nil
+			}
 			return a, a.startScan()
 		}
 		var cmd tea.Cmd
@@ -289,12 +483,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // paneHeight is the outer height of both panes (the help line sits below).
 func (a *App) paneHeight() int { return max(5, a.height-1) }
 
-// paneWidths returns the outer widths of the form and results panes; 0 hides a pane.
-func (a *App) paneWidths() (form, results int) {
+// leftHeights splits the left column: the form takes what it needs, the Bin
+// the rest. When the Bin wouldn't fit, the form takes it all and bin is 0.
+func (a *App) leftHeights() (form, bin int) {
+	h := a.paneHeight()
+	fw, _ := a.paneWidths()
+	fh := lipgloss.Height(a.styles.pane.Width(max(fw, formWidth)).Render(a.formBody())) // as wrapped
+	if h-fh < minBinHeight {
+		return h, 0
+	}
+	return fh, h - fh
+}
+
+func (a *App) formBody() string { return a.styles.title.Render("Search") + "\n\n" + a.form.View() }
+
+// paneWidths returns the outer widths of the left column and results pane; 0 hides one.
+func (a *App) paneWidths() (left, results int) {
 	switch {
 	case a.width >= narrowWidth:
 		return formWidth, a.width - formWidth
-	case a.focus == focusForm:
+	case a.focus != focusResults:
 		return a.width, 0
 	default:
 		return 0, a.width
@@ -320,27 +528,47 @@ func (a *App) View() tea.View {
 	fw, rw := a.paneWidths()
 	h := a.paneHeight()
 
+	pane := func(f focus, w, h int) lipgloss.Style {
+		st := a.styles.pane
+		if a.focus == f {
+			st = a.styles.focusedPane
+		}
+		return st.Width(w).Height(h).MaxHeight(h)
+	}
 	var panes []string
 	if fw > 0 {
-		st := a.styles.pane
-		if a.focus == focusForm {
-			st = a.styles.focusedPane
+		fh, bh := a.leftHeights()
+		left := pane(focusForm, fw, fh).Render(a.formBody())
+		if bh > 0 {
+			left = lipgloss.JoinVertical(lipgloss.Left, left, pane(focusBin, fw, bh).Render(a.bin.view(fw-4, bh-2)))
 		}
-		panes = append(panes, st.Width(fw).Height(h).MaxHeight(h).Render(a.styles.title.Render("Search")+"\n\n"+a.form.View()))
+		panes = append(panes, left)
 	}
 	if rw > 0 {
-		st := a.styles.pane
-		if a.focus == focusResults {
-			st = a.styles.focusedPane
-		}
-		panes = append(panes, st.Width(rw).Height(h).MaxHeight(h).Render(a.resultsView(rw-4)))
+		panes = append(panes, pane(focusResults, rw, h).Render(a.resultsView(rw-4)))
 	}
 
-	bindings := formHelp()
-	if a.focus == focusResults {
+	bindings := formHelp(a.form.canComplete())
+	switch {
+	case a.dialog != nil:
+		bindings = dialogHelp()
+	case a.focus == focusBin:
+		bindings = a.bin.ShortHelp()
+	case a.focus == focusResults:
 		bindings = a.tree.keys.ShortHelp()
 	}
 	out := lipgloss.JoinHorizontal(lipgloss.Top, panes...) + "\n" + a.help.ShortHelpView(bindings)
+
+	// A dialog floats centred over the window.
+	if a.dialog != nil {
+		d := a.dialog.view(a.styles, a.width-2)
+		x := max(0, (a.width-lipgloss.Width(d))/2)
+		y := max(0, (h-lipgloss.Height(d))/2)
+		out = lipgloss.NewCompositor(
+			lipgloss.NewLayer(out),
+			lipgloss.NewLayer(d).X(x).Y(y).Z(1),
+		).Render()
+	}
 
 	v := tea.NewView(out)
 	v.AltScreen = true
@@ -358,6 +586,10 @@ func (a *App) resultsView(w int) string {
 	switch {
 	case a.scanning:
 		status = "scanning"
+	case a.restored && a.cancelled:
+		status = "cancelled, saved " + humanize.Time(a.scannedAt)
+	case a.restored:
+		status = "saved " + humanize.Time(a.scannedAt)
 	case a.cancelled:
 		status = "cancelled"
 	}

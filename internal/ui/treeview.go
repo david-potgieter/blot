@@ -26,6 +26,7 @@ type treeModel struct {
 	rows          []tree.Row
 	cursor        int
 	offset        int
+	wantOffset    int // restored scroll position, applied once the size is known; -1 if none
 	width, height int
 	keys          treeKeys
 	styles        styles
@@ -34,7 +35,7 @@ type treeModel struct {
 
 func newTreeModel(st styles) treeModel {
 	home, _ := os.UserHomeDir()
-	return treeModel{keys: newTreeKeys(), styles: st, home: home}
+	return treeModel{keys: newTreeKeys(), styles: st, home: home, wantOffset: -1}
 }
 
 // setTree swaps in a rebuilt tree, keeping the cursor on the same path.
@@ -48,7 +49,11 @@ func (m *treeModel) setTree(t *tree.Tree) {
 	if t != nil {
 		m.rows = t.Rows()
 	}
-	// Follow the node; if it was filtered out, fall back to its nearest visible ancestor.
+	m.follow(cur)
+}
+
+// follow puts the cursor on path or, if that row isn't shown, its nearest shown ancestor.
+func (m *treeModel) follow(cur string) {
 	index := make(map[string]int, len(m.rows))
 	for i, r := range m.rows {
 		index[r.Node.Path] = i
@@ -78,6 +83,9 @@ func (m *treeModel) refresh() {
 		m.rows = m.tree.Rows()
 	}
 	m.cursor = max(0, min(m.cursor, len(m.rows)-1))
+	if m.height > 0 && m.wantOffset >= 0 {
+		m.offset, m.wantOffset = m.wantOffset, -1
+	}
 	h := m.listHeight()
 	if m.cursor < m.offset {
 		m.offset = m.cursor

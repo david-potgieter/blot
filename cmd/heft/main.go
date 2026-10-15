@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -46,17 +47,25 @@ func main() {
 		fmt.Println("heft", version)
 		return
 	}
+	// A plain `heft` picks up where the last run left off; any paths or flags start fresh.
+	restore := len(os.Args) == 1
 	if len(roots) == 0 {
 		roots = []string{"~"}
 	}
 
 	home, _ := os.UserHomeDir()
+	var session string
+	if cache, err := os.UserCacheDir(); err == nil {
+		session = filepath.Join(cache, "heft", "session.gob.gz")
+	}
 	app, err := ui.New(ui.Config{
 		Roots:    strings.Join(roots, ", "),
 		Min:      *minSize,
 		Type:     *typ,
 		SkipForm: *noForm,
 		Excludes: scan.DefaultExcludes(home),
+		Session:  session,
+		Restore:  restore,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "heft:", err)
