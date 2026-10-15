@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/david-potgieter/heft/internal/scan"
+	"github.com/david-potgieter/blot/internal/scan"
 )
 
 // fullDiskAccessURL opens System Settings at Privacy & Security → Full Disk Access.
@@ -38,8 +38,8 @@ func (a *App) rescanDialog(n *scan.Node) *dialog {
 func (a *App) accessDialog() *dialog {
 	return &dialog{
 		title: "Full Disk Access",
-		body: "macOS won't let heft read the Bin.\n\n" +
-			"In Settings, add the app heft runs in\n" +
+		body: "macOS won't let blot read the Bin.\n\n" +
+			"In Settings, add the app blot runs in\n" +
 			"(Terminal, iTerm, VS Code…), then quit\n" +
 			"and reopen that app.",
 		options: []string{"Open Settings", "Not now"},

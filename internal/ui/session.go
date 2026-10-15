@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/david-potgieter/heft/internal/scan"
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/scan"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 // sessionVersion changes whenever the saved format does; older files are ignored.

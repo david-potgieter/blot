@@ -1,4 +1,4 @@
-module github.com/david-potgieter/heft
+module github.com/david-potgieter/blot
 
 go 1.26.0
 

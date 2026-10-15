@@ -3,7 +3,7 @@ package tree
 import (
 	"testing"
 
-	"github.com/david-potgieter/heft/internal/scan"
+	"github.com/david-potgieter/blot/internal/scan"
 )
 
 func dir(name string, size int64, kids ...*scan.Node) *scan.Node {

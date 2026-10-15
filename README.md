@@ -1,8 +1,8 @@
-# heft
+# blōt
 
-Find big files and folders on your Mac, in your terminal.
+*blōt (say "bloat"): find what's bloating your disk, in your terminal.*
 
-`heft` scans folders in parallel and shows everything over a size threshold as a navigable tree.
+`blot` scans folders in parallel and shows everything over a size threshold as a navigable tree.
 The search form sits on the left and results stream in on the right as the scan runs; changing
 the minimum size or type re-filters instantly, without rescanning.
 Built with [Bubble Tea](https://charm.land), [Bubbles](https://charm.land) and [Lip Gloss](https://charm.land).
@@ -10,15 +10,15 @@ Built with [Bubble Tea](https://charm.land), [Bubbles](https://charm.land) and [
 ## Install
 
 ```sh
-go install github.com/david-potgieter/heft/cmd/heft@latest
+go install github.com/david-potgieter/blot/cmd/blot@latest
 ```
 
 ## Usage
 
 ```sh
-heft                                  # empty results, form focused
-heft ~/Work --min 500MB               # prefill the form, press enter to search
-heft ~/Work ~/Downloads --min 1GB --type files --no-form
+blot                                  # back where you left off (or an empty form the first time)
+blot ~/Work --min 500MB               # prefill the form, press enter to search
+blot ~/Work ~/Downloads --min 1GB --type files --no-form
 ```
 
 | flag | default | |
@@ -73,7 +73,7 @@ pane at a time.
 ### Sessions
 
 Quitting saves the whole view (search, results, open folders, cursor) to
-`~/Library/Caches/heft/`. Running plain `heft` again shows it as you left it, marked
+`~/Library/Caches/blot/`. Running plain `blot` again shows it as you left it, marked
 "saved … ago", without rescanning; press `r` or Search to rescan. Passing any paths or
 flags starts fresh.
 

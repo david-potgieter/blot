@@ -10,7 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 func formKeys(f formModel, keys ...tea.KeyPressMsg) (formModel, tea.Cmd) {

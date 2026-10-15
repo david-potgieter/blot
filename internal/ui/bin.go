@@ -16,8 +16,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/dustin/go-humanize"
 
-	"github.com/david-potgieter/heft/internal/scan"
-	"github.com/david-potgieter/heft/internal/size"
+	"github.com/david-potgieter/blot/internal/scan"
+	"github.com/david-potgieter/blot/internal/size"
 )
 
 // binPoll is how often the Bin is checked for changes. Only its modification

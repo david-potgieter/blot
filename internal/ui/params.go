@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/david-potgieter/heft/internal/size"
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/size"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 // Params is a validated search.

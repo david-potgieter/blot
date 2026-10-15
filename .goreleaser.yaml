@@ -1,7 +1,7 @@
 version: 2
 builds:
-  - main: ./cmd/heft
-    binary: heft
+  - main: ./cmd/blot
+    binary: blot
     env: [CGO_ENABLED=0]
     goos: [darwin]
     goarch: [amd64, arm64]

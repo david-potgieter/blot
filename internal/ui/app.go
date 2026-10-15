@@ -1,4 +1,4 @@
-// Package ui is heft's Bubble Tea interface.
+// Package ui is blot's Bubble Tea interface.
 package ui
 
 import (
@@ -18,9 +18,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/dustin/go-humanize"
 
-	"github.com/david-potgieter/heft/internal/scan"
-	"github.com/david-potgieter/heft/internal/size"
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/scan"
+	"github.com/david-potgieter/blot/internal/size"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 const (
@@ -159,7 +159,7 @@ func (a *App) startScan() tea.Cmd {
 }
 
 // quit stops any scan and saves the view for next time. Saving is best effort:
-// failing to save must never stop heft from quitting.
+// failing to save must never stop blot from quitting.
 func (a *App) quit() tea.Cmd {
 	a.stopScan()
 	if a.cfg.Session != "" {

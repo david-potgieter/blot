@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/david-potgieter/heft/internal/scan"
+	"github.com/david-potgieter/blot/internal/scan"
 )
 
 // Type selects which kinds of nodes match.

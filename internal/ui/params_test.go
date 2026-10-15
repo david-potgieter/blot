@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 func TestParseRoots(t *testing.T) {

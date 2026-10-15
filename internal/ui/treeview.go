@@ -12,9 +12,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/dustin/go-humanize"
 
-	"github.com/david-potgieter/heft/internal/scan"
-	"github.com/david-potgieter/heft/internal/size"
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/scan"
+	"github.com/david-potgieter/blot/internal/size"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 const barWidth = 10

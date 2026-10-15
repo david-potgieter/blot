@@ -1,4 +1,4 @@
-// Command heft finds big files and folders on macOS.
+// Command blot finds big files and folders on macOS.
 package main
 
 import (
@@ -11,8 +11,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/david-potgieter/heft/internal/scan"
-	"github.com/david-potgieter/heft/internal/ui"
+	"github.com/david-potgieter/blot/internal/scan"
+	"github.com/david-potgieter/blot/internal/ui"
 )
 
 var version = "dev" // set by goreleaser
@@ -23,7 +23,7 @@ func main() {
 	noForm := flag.Bool("no-form", false, "skip the form and scan immediately")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: heft [paths...] [flags]\n\nFind big files and folders.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: blot [paths...] [flags]\n\nFind big files and folders.\n\n")
 		flag.PrintDefaults()
 	}
 
@@ -44,10 +44,10 @@ func main() {
 		if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 			version = bi.Main.Version
 		}
-		fmt.Println("heft", version)
+		fmt.Println("blot", version)
 		return
 	}
-	// A plain `heft` picks up where the last run left off; any paths or flags start fresh.
+	// A plain `blot` picks up where the last run left off; any paths or flags start fresh.
 	restore := len(os.Args) == 1
 	if len(roots) == 0 {
 		roots = []string{"~"}
@@ -56,7 +56,7 @@ func main() {
 	home, _ := os.UserHomeDir()
 	var session string
 	if cache, err := os.UserCacheDir(); err == nil {
-		session = filepath.Join(cache, "heft", "session.gob.gz")
+		session = filepath.Join(cache, "blot", "session.gob.gz")
 	}
 	app, err := ui.New(ui.Config{
 		Roots:    strings.Join(roots, ", "),
@@ -68,11 +68,11 @@ func main() {
 		Restore:  restore,
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "heft:", err)
+		fmt.Fprintln(os.Stderr, "blot:", err)
 		os.Exit(2)
 	}
 	if _, err := tea.NewProgram(app).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "heft:", err)
+		fmt.Fprintln(os.Stderr, "blot:", err)
 		os.Exit(1)
 	}
 }

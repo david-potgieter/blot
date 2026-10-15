@@ -14,7 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/dustin/go-humanize"
 
-	"github.com/david-potgieter/heft/internal/tree"
+	"github.com/david-potgieter/blot/internal/tree"
 )
 
 func TestNewValidatesWhenSkippingForm(t *testing.T) {
@@ -429,7 +429,7 @@ func TestTrashedResultsDropOut(t *testing.T) {
 
 func TestQuitSavesAndPlainStartRestores(t *testing.T) {
 	dir := fixtureDir(t)
-	path := filepath.Join(t.TempDir(), "heft", "session.gob.gz")
+	path := filepath.Join(t.TempDir(), "blot", "session.gob.gz")
 	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true, Session: path, Bin: t.TempDir()})
 	finish(t, a)
 	a.Update(press("s"))     // by name: big, mid
