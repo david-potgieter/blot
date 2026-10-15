@@ -41,6 +41,7 @@ type App struct {
 	styles        styles
 	width, height int
 	err           error
+	initCmd       tea.Cmd // from New's showForm/startScan, returned once by Init
 }
 
 // New builds the app. With SkipForm it validates cfg and starts scanning.
@@ -55,22 +56,22 @@ func New(cfg Config) (*App, error) {
 		if err != nil {
 			return nil, err
 		}
-		a.startScan(p)
+		a.initCmd = a.startScan(p)
 		return a, nil
 	}
-	a.showForm()
+	a.initCmd = a.showForm()
 	return a, nil
 }
 
 func (a *App) Init() tea.Cmd {
-	if a.state == stateScanning {
-		return tea.Batch(tea.RequestBackgroundColor, a.scan.Init())
-	}
-	return tea.Batch(tea.RequestBackgroundColor, a.form.Init())
+	return tea.Batch(tea.RequestBackgroundColor, a.initCmd)
 }
 
 func (a *App) showForm() tea.Cmd {
 	a.form = newForm(a.values)
+	if a.width > 0 {
+		a.form = a.form.WithWidth(a.width)
+	}
 	a.state = stateForm
 	return a.form.Init()
 }

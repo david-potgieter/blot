@@ -90,8 +90,8 @@ func (m scanModel) View(width int) string {
 	s := m.styles
 	p := m.progress
 	cur := p.Current
-	if width > 4 && len(cur) > width-4 {
-		cur = "…" + cur[len(cur)-(width-5):]
+	if r := []rune(cur); width > 5 && len(r) > width-4 {
+		cur = "…" + string(r[len(r)-(width-5):])
 	}
 	return fmt.Sprintf("%s %s %s\n\n  %s files · %s folders · %s · %s errors · %s\n\n  %s\n\n  %s",
 		m.spinner.View(), s.title.Render("Scanning"), s.subtle.Render(m.params.summary()),
