@@ -2,10 +2,8 @@
 
 *blōt (say "bloat"): find what's bloating your disk, in your terminal.*
 
-`blot` scans folders in parallel and shows everything over a size threshold as a navigable tree.
-The search form sits on the left and results stream in on the right as the scan runs; changing
-the minimum size or type re-filters instantly, without rescanning.
-Built with [Bubble Tea](https://charm.land), [Bubbles](https://charm.land) and [Lip Gloss](https://charm.land).
+`blot` scans folders in parallel and shows everything over a size you choose as a tree you can
+browse. Results stream in while it scans. macOS only.
 
 ## Install
 
@@ -13,78 +11,61 @@ Built with [Bubble Tea](https://charm.land), [Bubbles](https://charm.land) and [
 go install github.com/david-potgieter/blot/cmd/blot@latest
 ```
 
-## Usage
+Make sure `~/go/bin` is on your `PATH`.
+
+## How to use
+
+1. Run `blot`.
+2. In **Search** (left), type the folders to scan, e.g. `~/Work, ~/Downloads`. `tab` completes folder names.
+3. Set **Min size** (e.g. `500MB`) and pick what to **Show** with `←`/`→`: files & folders, folders, or files.
+4. Press `enter` to search. Focus jumps to **Results** (right) and the tree fills in as the scan runs.
+5. Browse with the arrow keys. Press `o` to reveal an item in Finder, and delete it there.
+
+While results are showing, changing Min size or Show re-filters straight away, with no rescan.
+**Bin** (bottom left) shows what's in your Trash, biggest first.
+
+Quit with `q`. Next time, plain `blot` reopens exactly where you left off; press `r` to rescan.
+
+## Examples
 
 ```sh
-blot                                  # back where you left off (or an empty form the first time)
-blot ~/Work --min 500MB               # prefill the form, press enter to search
-blot ~/Work ~/Downloads --min 1GB --type files --no-form
+blot ~ --min 1GB --type dirs --no-form       # biggest folders in your home, scan straight away
+blot ~/Downloads --min 200MB --type files    # big files in Downloads, form prefilled
+blot ~/Work ~/Code --min 500MB               # several folders at once
 ```
 
 | flag | default | |
 |---|---|---|
 | `--min` | `100MB` | minimum size (`500MB`, `1GiB`, …) |
 | `--type` | `all` | `all`, `dirs` or `files` |
-| `--no-form` | `false` | scan immediately |
-| `--version` | | print version |
+| `--no-form` | off | start scanning immediately |
+| `--version` | | print the version |
 
-### Keys
+Any path or flag starts a fresh search instead of reopening the last one.
 
-`tab` / `shift+tab` move between panes: Search, Bin, Results.
+## Keys
 
-Search pane (top left):
+| key | where | action |
+|---|---|---|
+| `tab` / `shift+tab` | anywhere | next / previous pane (in Folders, `tab` first completes a name) |
+| `↑` `↓` | Search | previous / next field |
+| `←` `→` | Search | change Show |
+| `enter` | Search | Search, or Cancel while scanning |
+| `↑`/`k` `↓`/`j` | Results, Bin | move |
+| `→`/`l` `←`/`h` | Results | expand / collapse |
+| `g` / `G` | Results | top / bottom |
+| `s` | Results | sort by size or name |
+| `o` | Results, Bin | reveal in Finder |
+| `r` | Results | rescan (this folder or everything) |
+| `q` / `ctrl+c` | anywhere (`ctrl+c` in Search) | quit |
 
-| key | action |
-|---|---|
-| `↓` / `↑` | next / previous field |
-| `tab` | in *Folders*: complete the folder name being typed (`ctrl+n`/`ctrl+p` for other matches) |
-| `←`/`→` | change *Show* (files & folders, folders, files) |
-| `enter` | press the button: **Search**, or **Cancel** while scanning |
-| `esc` | go to results |
-| `ctrl+c` | quit |
+## Good to know
 
-*Folders* takes several paths separated by commas. For a comma inside a folder name type `\,`
-(and `\\` for a backslash); completion and paths given on the command line do this for you.
-
-Results pane (right):
-
-| key | action |
-|---|---|
-| `↑`/`k` `↓`/`j` | move |
-| `→`/`l`/`enter` | expand |
-| `←`/`h` | collapse / go to parent |
-| `g` / `G` | top / bottom |
-| `s` | sort by size or name |
-| `o` | reveal in Finder |
-| `r` | rescan from the focused folder, or everything |
-| `q` / `ctrl+c` | quit |
-
-Bin pane (bottom left) shows what's in the Trash, biggest first:
-
-| key | action |
-|---|---|
-| `↑`/`k` `↓`/`j` | move |
-| `o` | reveal in Finder |
-| `r` | measure again |
-| `enter` | without Full Disk Access: offer to open System Settings |
-| `q` / `ctrl+c` | quit |
-
-Lowering the minimum size below what was scanned (1MB, or your minimum if smaller), or changing
-folders, needs a rescan; the results header says so. Terminals narrower than 90 columns show one
-pane at a time.
-
-### Sessions
-
-Quitting saves the whole view (search, results, open folders, cursor) to
-`~/Library/Caches/blot/`. Running plain `blot` again shows it as you left it, marked
-"saved … ago", without rescanning; press `r` or Search to rescan. Passing any paths or
-flags starts fresh.
-
-### Notes
-
-- Sizes are actual disk usage. Hard links count once; symlinks aren't followed; other volumes are skipped (scanning `/` includes the Data volume).
-- Skipped by default: `/System`, `/Volumes`, `/dev`, swap, iCloud Drive, `~/Library/CloudStorage` (Dropbox, OneDrive…) and the Trash.
-- macOS protects some folders. Without **Full Disk Access** for your terminal (System Settings → Privacy & Security), scanning `~` may trigger several permission prompts and skip protected folders.
+- **Full Disk Access:** macOS hides some folders from your terminal. To scan them without permission prompts, add your terminal under System Settings → Privacy & Security → Full Disk Access.
+- **Sizes** are real disk usage. Hard links count once, symlinks aren't followed, and other volumes are skipped.
+- **Skipped:** `/System`, `/Volumes`, iCloud Drive, `~/Library/CloudStorage` (Dropbox, OneDrive…) and the Trash.
+- **Going smaller:** a scan keeps everything down to 1MB (or your min, if that was lower). To show anything smaller, press Search again.
+- **Commas:** write a comma inside a folder name as `\,` (and a backslash as `\\`). Completion does this for you.
 
 ## License
 
