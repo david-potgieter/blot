@@ -27,20 +27,25 @@ func press(s string) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: s}
 }
 
-func testResult() *scan.Result {
+// testRoots: /r(3MB) → a(2MB) → f.bin(1.9MB); /r → b(1MB).
+func testRoots() []*scan.Node {
 	root := &scan.Node{Name: "/r", Path: "/r", IsDir: true, Size: 3_000_000}
 	a := &scan.Node{Name: "a", Path: "/r/a", IsDir: true, Size: 2_000_000, Parent: root}
 	f := &scan.Node{Name: "f.bin", Path: "/r/a/f.bin", Size: 1_900_000, Parent: a}
 	b := &scan.Node{Name: "b", Path: "/r/b", IsDir: true, Size: 1_000_000, Parent: root}
 	a.Children = []*scan.Node{f}
 	root.Children = []*scan.Node{b, a}
-	return &scan.Result{Roots: []*scan.Node{root}, Files: 10, Dirs: 3, Bytes: 3_000_000, ErrorCount: 2}
+	return []*scan.Node{root}
 }
 
-func newTestTree() treeModel {
-	p := Params{Roots: []string{"/r"}, Min: 500_000, Type: tree.All}
-	return newTreeModel(testResult(), p, newStyles(true), 100, 30)
+func treeFor(roots []*scan.Node, minSize int64, w, h int) treeModel {
+	m := newTreeModel(newStyles(true))
+	m.setSize(w, h)
+	m.setTree(tree.New(roots, tree.Filter{Min: minSize}))
+	return m
 }
+
+func newTestTree() treeModel { return treeFor(testRoots(), 500_000, 100, 30) }
 
 func send(m treeModel, keys ...string) treeModel {
 	for _, k := range keys {
@@ -96,8 +101,7 @@ func TestTreeSortKeepsCursorOnNode(t *testing.T) {
 	z := &scan.Node{Name: "z", Path: "/r/z", IsDir: true, Size: 2_000_000, Parent: root}
 	a := &scan.Node{Name: "a", Path: "/r/a", IsDir: true, Size: 1_000_000, Parent: root}
 	root.Children = []*scan.Node{a, z}
-	res := &scan.Result{Roots: []*scan.Node{root}}
-	m := newTreeModel(res, Params{Roots: []string{"/r"}, Min: 0}, newStyles(true), 100, 30)
+	m := treeFor([]*scan.Node{root}, 0, 100, 30)
 
 	m = send(m, "down")
 	if got := m.current().Name; got != "z" || m.cursor != 1 {
@@ -109,15 +113,37 @@ func TestTreeSortKeepsCursorOnNode(t *testing.T) {
 	}
 }
 
+func TestSetTreeKeepsCursorByPath(t *testing.T) {
+	m := send(newTestTree(), "down", "down") // on b
+	if m.current().Path != "/r/b" {
+		t.Fatalf("start = %s", m.current().Path)
+	}
+	// A fresh snapshot where b is now bigger than a, so it moves to row 1.
+	roots := testRoots()
+	roots[0].Children[0].Size = 2_500_000
+	m.setTree(tree.Rebuild(roots, tree.Filter{Min: 500_000}, tree.BySize, m.tree.ExpandedPaths()))
+	if m.current().Path != "/r/b" || m.cursor != 1 {
+		t.Errorf("cursor on %s at %d, want /r/b at 1", m.current().Path, m.cursor)
+	}
+}
+
+func TestEmptyTreeIgnoresKeys(t *testing.T) {
+	m := newTreeModel(newStyles(true))
+	m.setSize(40, 5)
+	m = send(m, "down", "right", "s", "o")
+	if m.current() != nil || lipgloss.Height(m.View()) != 5 {
+		t.Errorf("empty tree misbehaved")
+	}
+}
+
 // bigTree has a root with n child dirs of descending size.
 func bigTree(n, w, h int) treeModel {
 	root := &scan.Node{Name: "/r", Path: "/r", IsDir: true, Size: int64(n * 1000)}
 	for i := range n {
-		c := &scan.Node{Name: fmt.Sprintf("d%02d", i), IsDir: true, Size: int64((n - i) * 10), Parent: root}
+		c := &scan.Node{Name: fmt.Sprintf("d%02d", i), Path: fmt.Sprintf("/r/d%02d", i), IsDir: true, Size: int64((n - i) * 10), Parent: root}
 		root.Children = append(root.Children, c)
 	}
-	res := &scan.Result{Roots: []*scan.Node{root}, ErrorCount: 3}
-	return newTreeModel(res, Params{Roots: []string{"/r"}}, newStyles(true), w, h)
+	return treeFor([]*scan.Node{root}, 0, w, h)
 }
 
 func TestTreeScrollMovesCursorBeforeWindow(t *testing.T) {
@@ -139,8 +165,8 @@ func TestTreeScrollMovesCursorBeforeWindow(t *testing.T) {
 	}
 }
 
-func TestTreeViewFitsWindow(t *testing.T) {
-	for _, keys := range [][]string{nil, {"G"}, {"?"}} {
+func TestTreeViewFitsBox(t *testing.T) {
+	for _, keys := range [][]string{nil, {"G"}} {
 		m := send(bigTree(30, 40, 15), keys...)
 		out := m.View()
 		if got := lipgloss.Height(out); got != 15 {
@@ -152,21 +178,11 @@ func TestTreeViewFitsWindow(t *testing.T) {
 	}
 }
 
-func TestTreeView(t *testing.T) {
+func TestTreeViewRows(t *testing.T) {
 	out := newTestTree().View()
-	for _, want := range []string{"heft", "/r", "a/", "b/", "2.0 MB", "2 errors", "Full Disk Access"} {
+	for _, want := range []string{"/r", "a/", "b/", "2.0 MB", "▸"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q:\n%s", want, out)
 		}
-	}
-}
-
-func TestTreeQuit(t *testing.T) {
-	_, cmd := newTestTree().Update(press("q"))
-	if cmd == nil {
-		t.Fatal("q should quit")
-	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatal("q should return tea.Quit")
 	}
 }

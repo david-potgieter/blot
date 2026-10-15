@@ -156,6 +156,15 @@ func TestRebuildKeepsExpansionAndSort(t *testing.T) {
 	}
 }
 
+func TestRebuildKeepsCollapsedRoot(t *testing.T) {
+	tr := New([]*scan.Node{sample()}, Filter{Min: 280})
+	tr.Collapse(tr.Rows()[0].Node)
+	tr2 := Rebuild([]*scan.Node{sample()}, tr.Filter(), tr.Sort(), tr.ExpandedPaths())
+	eq(t, names(tr2.Rows()), []string{"root"})
+	tr3 := Rebuild([]*scan.Node{sample()}, tr.Filter(), tr.Sort(), map[string]bool{})
+	eq(t, names(tr3.Rows()), []string{"root", "big", "other"})
+}
+
 func TestSortSizeDesc(t *testing.T) {
 	tr := New([]*scan.Node{dir("r", 10, dir("a", 1), dir("b", 5))}, Filter{})
 	eq(t, names(tr.Rows()), []string{"r", "b", "a"})

@@ -2,8 +2,10 @@ package ui
 
 import "charm.land/bubbles/v2/key"
 
+// treeKeys are the results pane bindings. Rescan, Search and Quit are handled
+// by the app but listed here for the help line.
 type treeKeys struct {
-	Up, Down, Expand, Collapse, Top, Bottom, Sort, Reveal, Rescan, New, Help, Quit key.Binding
+	Up, Down, Expand, Collapse, Top, Bottom, Sort, Reveal, Rescan, Search, Quit key.Binding
 }
 
 func newTreeKeys() treeKeys {
@@ -15,23 +17,24 @@ func newTreeKeys() treeKeys {
 		Top:      key.NewBinding(key.WithKeys("g", "home"), key.WithHelp("g", "top")),
 		Bottom:   key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "bottom")),
 		Sort:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort")),
-		Reveal:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "reveal in Finder")),
+		Reveal:   key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "reveal")),
 		Rescan:   key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
-		New:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new search")),
-		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Search:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "search")),
 		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
 func (k treeKeys) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Expand, k.Collapse, k.Sort, k.Reveal, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Expand, k.Collapse, k.Sort, k.Reveal, k.Rescan, k.Search, k.Quit}
 }
 
-func (k treeKeys) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down, k.Top, k.Bottom},
-		{k.Expand, k.Collapse, k.Sort},
-		{k.Reveal, k.Rescan, k.New},
-		{k.Help, k.Quit},
+// formHelp is the help line while the search pane has focus.
+func formHelp() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab/↑↓", "field")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "search/cancel")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "results")),
+		key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 	}
 }

@@ -19,16 +19,7 @@ type Params struct {
 	Type  tree.Type
 }
 
-func (p Params) summary() string {
-	home, _ := os.UserHomeDir()
-	roots := make([]string, len(p.Roots))
-	for i, r := range p.Roots {
-		roots[i] = tildify(r, home)
-	}
-	return fmt.Sprintf("%s · ≥ %s · %s", strings.Join(roots, ", "), size.Format(p.Min), p.Type)
-}
-
-// formValues backs the huh form fields (huh needs stable pointers).
+// formValues is the raw form input.
 type formValues struct {
 	roots string
 	min   string

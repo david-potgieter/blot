@@ -3,7 +3,9 @@
 Find big files and folders on your Mac, in your terminal.
 
 `heft` scans folders in parallel and shows everything over a size threshold as a navigable tree.
-Built with [Bubble Tea](https://charm.land), [Bubbles](https://charm.land), [Lip Gloss](https://charm.land) and [Huh](https://charm.land).
+The search form sits on the left and results stream in on the right as the scan runs; changing
+the minimum size or type re-filters instantly, without rescanning.
+Built with [Bubble Tea](https://charm.land), [Bubbles](https://charm.land) and [Lip Gloss](https://charm.land).
 
 ## Install
 
@@ -14,8 +16,8 @@ go install github.com/david-potgieter/heft/cmd/heft@latest
 ## Usage
 
 ```sh
-heft                                  # opens a form
-heft ~/Work --min 500MB               # prefill the form
+heft                                  # empty results, form focused
+heft ~/Work --min 500MB               # prefill the form, press enter to search
 heft ~/Work ~/Downloads --min 1GB --type files --no-form
 ```
 
@@ -28,6 +30,18 @@ heft ~/Work ~/Downloads --min 1GB --type files --no-form
 
 ### Keys
 
+Search pane (left):
+
+| key | action |
+|---|---|
+| `tab`/`↓`, `shift+tab`/`↑` | next / previous field |
+| `←`/`→` | change *Show* (files & folders, folders, files) |
+| `enter` | press the button: **Search**, or **Cancel** while scanning |
+| `esc` | go to results |
+| `ctrl+c` | quit |
+
+Results pane (right):
+
 | key | action |
 |---|---|
 | `↑`/`k` `↓`/`j` | move |
@@ -37,9 +51,12 @@ heft ~/Work ~/Downloads --min 1GB --type files --no-form
 | `s` | sort by size or name |
 | `o` | reveal in Finder |
 | `r` | rescan |
-| `n` | new search |
-| `?` | help |
+| `tab` | go to search |
 | `q` / `ctrl+c` | quit |
+
+Lowering the minimum size below what was scanned (1MB, or your minimum if smaller), or changing
+folders, needs a rescan; the results header says so. Terminals narrower than 90 columns show one
+pane at a time.
 
 ### Notes
 

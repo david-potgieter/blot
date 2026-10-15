@@ -3,10 +3,14 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"github.com/david-potgieter/heft/internal/tree"
 )
 
 func TestNewValidatesWhenSkippingForm(t *testing.T) {
@@ -18,95 +22,183 @@ func TestNewValidatesWhenSkippingForm(t *testing.T) {
 	}
 }
 
-// startedApp returns an app scanning a temp dir holding one 50KB file.
-func startedApp(t *testing.T) *App {
+// fixtureDir holds big (3MB), mid/f (1.5MB) and small (10KB).
+func fixtureDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "big"), make([]byte, 50_000), 0o644); err != nil {
-		t.Fatal(err)
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	for name, n := range map[string]int{"big": 3_000_000, "mid/f": 1_500_000, "small": 10_000} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, n), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	a, err := New(Config{Roots: dir, Min: "1KB", Type: "all", SkipForm: true})
+	return dir
+}
+
+func newApp(t *testing.T, cfg Config) *App {
+	t.Helper()
+	a, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.state != stateScanning {
-		t.Fatalf("state = %v", a.state)
-	}
+	a.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	return a
 }
 
-// nextScanMsg waits for the scan's next message, failing instead of hanging.
-func nextScanMsg(t *testing.T, a *App) tea.Msg {
+// finish waits for the current job and delivers its done message.
+func finish(t *testing.T, a *App) {
 	t.Helper()
-	ch := make(chan tea.Msg, 1)
-	go func() { ch <- a.scan.wait()() }()
 	select {
-	case msg := <-ch:
-		return msg
+	case <-a.job.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("scan did not finish")
-		return nil
+	}
+	a.Update(jobDoneMsg{a.jobID})
+}
+
+func names(a *App) []string {
+	var out []string
+	for _, r := range a.tree.rows {
+		out = append(out, r.Node.Name)
+	}
+	return out
+}
+
+func TestSubmitScansAndFocusesResults(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all"})
+	if a.focus != focusForm || a.job != nil {
+		t.Fatal("should start on the form with no scan")
+	}
+	if !strings.Contains(a.View().Content, "Set a search") {
+		t.Error("missing pre-scan hint")
+	}
+	a.Update(submitMsg{})
+	if !a.scanning || a.focus != focusResults || !a.form.scanning {
+		t.Fatalf("scanning=%v focus=%v", a.scanning, a.focus)
+	}
+	finish(t, a)
+	if a.scanning || a.form.scanning {
+		t.Error("still scanning after done")
+	}
+	if got := strings.Join(names(a), ","); got != dir+",big,mid" {
+		t.Errorf("rows = %s", got)
 	}
 }
 
-func finishScan(t *testing.T, a *App) {
-	t.Helper()
-	for a.state == stateScanning {
-		a.Update(nextScanMsg(t, a))
+func TestFilterEditsApplyWithoutRescan(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true})
+	finish(t, a)
+	id := a.jobID
+
+	a.Update(keyTab) // results → form (roots field)
+	a.Update(keyTab) // min field
+	for range len("1MB") {
+		a.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	for _, r := range "2MB" {
+		a.Update(press(string(r)))
+	}
+	if a.jobID != id {
+		t.Fatal("filter edit started a new scan")
+	}
+	if got := strings.Join(names(a), ","); got != dir+",big" {
+		t.Errorf("rows after min 2MB = %s", got)
+	}
+
+	a.Update(keyTab)   // type field
+	a.Update(keyRight) // dirs only
+	if a.filter.Type != tree.Dirs {
+		t.Fatalf("type = %v", a.filter.Type)
+	}
+	if got := strings.Join(names(a), ","); got != dir {
+		t.Errorf("rows with dirs ≥ 2MB = %s", got)
 	}
 }
 
-// run executes cmd and feeds its message back into the app.
-func run(a *App, cmd tea.Cmd) {
-	if cmd != nil {
-		if msg := cmd(); msg != nil {
-			a.Update(msg)
-		}
+func TestMinBelowFloorAsksForRescan(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "5MB", Type: "all", SkipForm: true})
+	finish(t, a)
+	if a.floor != maxFloor {
+		t.Fatalf("floor = %d", a.floor)
+	}
+	a.form.min.SetValue("500KB")
+	if !a.stale() || !strings.Contains(a.View().Content, "press Search") {
+		t.Error("expected rescan hint for min below floor")
+	}
+	a.form.min.SetValue("2MB")
+	a.form.roots.SetValue(dir + ", " + t.TempDir())
+	if !a.stale() {
+		t.Error("expected stale after changing folders")
 	}
 }
 
-func TestAppScanToTree(t *testing.T) {
-	a := startedApp(t)
-	finishScan(t, a)
-	if a.state != stateTree {
-		t.Fatalf("state = %v, err = %v", a.state, a.err)
+func TestFocusSwitching(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all"})
+	a.Update(keyEsc)
+	if a.focus != focusForm {
+		t.Error("esc with no results should stay on form")
 	}
+	a.Update(submitMsg{})
+	finish(t, a)
+	a.Update(keyTab)
+	if a.focus != focusForm || !a.form.focused {
+		t.Fatal("tab should focus form")
+	}
+	a.Update(keyEsc)
+	if a.focus != focusResults || a.form.focused {
+		t.Fatal("esc should focus results")
+	}
+	_, cmd := a.Update(press("q"))
+	if cmd == nil {
+		t.Fatal("q in results should quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("q should return tea.Quit")
+	}
+}
+
+func TestSubmitWhileScanningCancels(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true})
+	a.Update(submitMsg{}) // the button shows Cancel while scanning
+	if !a.cancelled {
+		t.Fatal("submit while scanning should cancel")
+	}
+	finish(t, a)
+	if a.scanning || a.form.scanning {
+		t.Error("still scanning after cancel")
+	}
+}
+
+func TestTickStreamsSnapshot(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true})
+	<-a.job.Done()
+	a.Update(tickMsg{a.jobID}) // tick before the done message still shows results
 	if len(a.tree.rows) < 2 {
-		t.Errorf("rows = %d", len(a.tree.rows))
+		t.Errorf("rows after tick = %d", len(a.tree.rows))
 	}
-
-	_, cmd := a.Update(press("n"))
-	run(a, cmd)
-	if a.state != stateForm {
-		t.Errorf("state after n = %v", a.state)
-	}
+	a.Update(tickMsg{a.jobID - 1}) // stale tick ignored
 }
 
-func TestAppRescan(t *testing.T) {
-	a := startedApp(t)
-	finishScan(t, a)
-	id := a.scanID
-	_, cmd := a.Update(press("r"))
-	run(a, cmd)
-	if a.state != stateScanning || a.scanID != id+1 {
-		t.Fatalf("after r: state = %v, id = %d", a.state, a.scanID)
-	}
-	finishScan(t, a)
-	if a.state != stateTree {
-		t.Errorf("state after rescan = %v", a.state)
-	}
-}
-
-func TestAppEscCancelsScanAndIgnoresStaleResult(t *testing.T) {
-	a := startedApp(t)
-	old := a.scan
-	a.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if a.state != stateForm {
-		t.Fatalf("state after esc = %v", a.state)
-	}
-	// The cancelled scan's done message must not leave the form.
-	a.Update(scanDoneMsg{id: old.id, res: nil, err: nil})
-	if a.state != stateForm || a.err != nil {
-		t.Errorf("stale result changed state = %v, err = %v", a.state, a.err)
+func TestViewFitsWindow(t *testing.T) {
+	for _, w := range []int{120, 70} {
+		a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true})
+		a.Update(tea.WindowSizeMsg{Width: w, Height: 20})
+		finish(t, a)
+		for _, f := range []focus{focusResults, focusForm} {
+			a.setFocus(f)
+			out := a.View().Content
+			if got := lipgloss.Height(out); got != 20 {
+				t.Errorf("w=%d focus=%d: height = %d, want 20", w, f, got)
+			}
+			if got := lipgloss.Width(out); got != w {
+				t.Errorf("w=%d focus=%d: width = %d, want %d", w, f, got, w)
+			}
+		}
 	}
 }

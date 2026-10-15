@@ -2,10 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -18,43 +18,54 @@ import (
 
 const barWidth = 10
 
-type (
-	rescanMsg    struct{}
-	newSearchMsg struct{}
-)
-
+// treeModel is the navigable result list. It renders rows only, into a box
+// sized by setSize; the app draws the pane around it.
 type treeModel struct {
 	tree          *tree.Tree
-	res           *scan.Result
-	params        Params
 	rows          []tree.Row
 	cursor        int
 	offset        int
 	width, height int
 	keys          treeKeys
-	help          help.Model
 	styles        styles
+	home          string // roots under home display as ~/…
 }
 
-func newTreeModel(res *scan.Result, p Params, st styles, w, h int) treeModel {
-	m := treeModel{
-		tree:   tree.New(res.Roots, tree.Filter{Min: p.Min, Type: p.Type}),
-		res:    res,
-		params: p,
-		width:  w,
-		height: h,
-		keys:   newTreeKeys(),
-		help:   help.New(),
-		styles: st,
+func newTreeModel(st styles) treeModel {
+	home, _ := os.UserHomeDir()
+	return treeModel{keys: newTreeKeys(), styles: st, home: home}
+}
+
+// setTree swaps in a rebuilt tree, keeping the cursor on the same path.
+func (m *treeModel) setTree(t *tree.Tree) {
+	var cur string
+	if n := m.current(); n != nil {
+		cur = n.Path
 	}
-	m.help.SetWidth(w)
+	m.tree = t
+	m.rows = nil
+	if t != nil {
+		m.rows = t.Rows()
+	}
+	for i, r := range m.rows {
+		if r.Node.Path == cur {
+			m.cursor = i
+			break
+		}
+	}
 	m.refresh()
-	return m
+}
+
+func (m *treeModel) setSize(w, h int) {
+	m.width, m.height = w, h
+	m.refresh()
 }
 
 // refresh rebuilds rows, clamps the cursor and scrolls just enough to keep it visible.
 func (m *treeModel) refresh() {
-	m.rows = m.tree.Rows()
+	if m.tree != nil {
+		m.rows = m.tree.Rows()
+	}
 	m.cursor = max(0, min(m.cursor, len(m.rows)-1))
 	h := m.listHeight()
 	if m.cursor < m.offset {
@@ -66,70 +77,58 @@ func (m *treeModel) refresh() {
 	m.offset = max(0, min(m.offset, len(m.rows)-h))
 }
 
-// listHeight is the number of rows that fit between header and footer.
 func (m treeModel) listHeight() int {
 	if m.height <= 0 {
 		return max(1, len(m.rows))
 	}
-	return max(1, m.height-3-lipgloss.Height(m.help.View(m.keys)))
+	return m.height
 }
 
-func (m treeModel) current() *scan.Node { return m.rows[m.cursor].Node }
+// current is the node under the cursor, or nil when there are no rows.
+func (m treeModel) current() *scan.Node {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return nil
+	}
+	return m.rows[m.cursor].Node
+}
 
 func (m treeModel) Update(msg tea.Msg) (treeModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.help.SetWidth(msg.Width)
-		m.refresh()
-	case tea.KeyPressMsg:
-		if len(m.rows) == 0 {
-			if key.Matches(msg, m.keys.Quit) {
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		switch {
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, m.keys.Up):
-			m.cursor--
-		case key.Matches(msg, m.keys.Down):
-			m.cursor++
-		case key.Matches(msg, m.keys.Top):
-			m.cursor = 0
-		case key.Matches(msg, m.keys.Bottom):
-			m.cursor = len(m.rows) - 1
-		case key.Matches(msg, m.keys.Expand):
-			m.tree.Expand(m.current())
-		case key.Matches(msg, m.keys.Collapse):
-			m.collapse()
-		case key.Matches(msg, m.keys.Sort):
-			cur := m.current()
-			if m.tree.Sort() == tree.BySize {
-				m.tree.SetSort(tree.ByName)
-			} else {
-				m.tree.SetSort(tree.BySize)
-			}
-			// Keep the cursor on the same node after rows are reordered.
-			m.rows = m.tree.Rows()
-			for i, r := range m.rows {
-				if r.Node == cur {
-					m.cursor = i
-					break
-				}
-			}
-		case key.Matches(msg, m.keys.Reveal):
-			return m, reveal(m.current().Path)
-		case key.Matches(msg, m.keys.Rescan):
-			return m, func() tea.Msg { return rescanMsg{} }
-		case key.Matches(msg, m.keys.New):
-			return m, func() tea.Msg { return newSearchMsg{} }
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-		}
-		m.refresh()
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok || len(m.rows) == 0 {
+		return m, nil
 	}
+	switch {
+	case key.Matches(k, m.keys.Up):
+		m.cursor--
+	case key.Matches(k, m.keys.Down):
+		m.cursor++
+	case key.Matches(k, m.keys.Top):
+		m.cursor = 0
+	case key.Matches(k, m.keys.Bottom):
+		m.cursor = len(m.rows) - 1
+	case key.Matches(k, m.keys.Expand):
+		m.tree.Expand(m.current())
+	case key.Matches(k, m.keys.Collapse):
+		m.collapse()
+	case key.Matches(k, m.keys.Sort):
+		cur := m.current()
+		if m.tree.Sort() == tree.BySize {
+			m.tree.SetSort(tree.ByName)
+		} else {
+			m.tree.SetSort(tree.BySize)
+		}
+		// Keep the cursor on the same node after rows are reordered.
+		m.rows = m.tree.Rows()
+		for i, r := range m.rows {
+			if r.Node == cur {
+				m.cursor = i
+				break
+			}
+		}
+	case key.Matches(k, m.keys.Reveal):
+		return m, reveal(m.current().Path)
+	}
+	m.refresh()
 	return m, nil
 }
 
@@ -155,33 +154,21 @@ func reveal(path string) tea.Cmd {
 	}
 }
 
+// View renders exactly listHeight lines, each at most width cells.
 func (m treeModel) View() string {
-	s := m.styles
-	header := s.title.Render("heft") + "  " + s.subtle.Render(m.params.summary()+" · sort: "+m.tree.Sort().String())
-
-	footer := fmt.Sprintf("scanned %s in %s files · %d matches",
-		size.Format(m.res.Bytes), humanize.Comma(m.res.Files), m.tree.MatchCount())
-	if m.res.ErrorCount > 0 {
-		footer += " · " + s.err.Render(fmt.Sprintf("%d errors — grant your terminal Full Disk Access for complete results", m.res.ErrorCount))
-	}
-	helpView := m.help.View(m.keys)
-
-	listHeight := m.listHeight()
-	end := min(len(m.rows), m.offset+listHeight)
-
-	var b strings.Builder
-	b.WriteString(m.fit(header) + "\n\n")
+	h := m.listHeight()
+	end := min(len(m.rows), m.offset+h)
+	lines := make([]string, 0, h)
 	for i := m.offset; i < end; i++ {
-		b.WriteString(m.renderRow(m.rows[i], i == m.cursor) + "\n")
+		lines = append(lines, m.renderRow(m.rows[i], i == m.cursor))
 	}
-	for i := end - m.offset; i < listHeight; i++ {
-		b.WriteString("\n")
+	for len(lines) < h {
+		lines = append(lines, "")
 	}
-	b.WriteString(m.fit(footer) + "\n" + helpView)
-	return b.String()
+	return strings.Join(lines, "\n")
 }
 
-// fit truncates a line to the window width so it never wraps.
+// fit truncates a line to the box width so it never wraps.
 func (m treeModel) fit(line string) string {
 	if m.width <= 0 {
 		return line
@@ -201,7 +188,9 @@ func (m treeModel) renderRow(r tree.Row, selected bool) string {
 		}
 	}
 	name := n.Name
-	if n.IsDir && r.Depth > 0 {
+	if r.Depth == 0 {
+		name = tildify(name, m.home)
+	} else if n.IsDir {
 		name += "/"
 	}
 	sz := fmt.Sprintf("%9s", size.Format(n.Size))

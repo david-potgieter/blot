@@ -97,8 +97,8 @@ func New(roots []*scan.Node, f Filter) *Tree {
 	return Rebuild(roots, f, BySize, nil)
 }
 
-// Rebuild is New with a sort order and expanded paths carried over from a
-// previous tree (see ExpandedPaths). A nil expanded map expands the roots.
+// Rebuild is New with a sort order and expansion state carried over from a
+// previous tree (see ExpandedPaths). Roots not seen before start expanded.
 func Rebuild(roots []*scan.Node, f Filter, s SortBy, expanded map[string]bool) *Tree {
 	t := &Tree{roots: roots, filter: f, sort: s, kids: map[*scan.Node][]*scan.Node{}, expanded: map[string]bool{}}
 	for p, e := range expanded {
@@ -106,7 +106,7 @@ func Rebuild(roots []*scan.Node, f Filter, s SortBy, expanded map[string]bool) *
 	}
 	for _, r := range roots {
 		t.visit(r)
-		if expanded == nil {
+		if _, seen := t.expanded[r.Path]; !seen {
 			t.expanded[r.Path] = true
 		}
 	}
@@ -114,7 +114,7 @@ func Rebuild(roots []*scan.Node, f Filter, s SortBy, expanded map[string]bool) *
 	return t
 }
 
-// ExpandedPaths returns a copy of the expanded paths, for Rebuild.
+// ExpandedPaths returns a copy of the expansion state (path → open), for Rebuild.
 func (t *Tree) ExpandedPaths() map[string]bool {
 	out := make(map[string]bool, len(t.expanded))
 	for p, e := range t.expanded {
@@ -189,8 +189,8 @@ func (t *Tree) Expand(n *scan.Node) {
 	}
 }
 
-// Collapse closes n.
-func (t *Tree) Collapse(n *scan.Node) { delete(t.expanded, n.Path) }
+// Collapse closes n. It is recorded as false so a collapsed root stays closed across Rebuild.
+func (t *Tree) Collapse(n *scan.Node) { t.expanded[n.Path] = false }
 
 // Rows flattens visible, expanded nodes depth-first.
 func (t *Tree) Rows() []Row {
