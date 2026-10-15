@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -38,6 +39,10 @@ func main() {
 		args = args[1:]
 	}
 	if *showVersion {
+		// go install builds aren't stamped by goreleaser; use the module version.
+		if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version
+		}
 		fmt.Println("heft", version)
 		return
 	}

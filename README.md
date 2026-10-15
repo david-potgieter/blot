@@ -24,6 +24,7 @@ heft ~/Work ~/Downloads --min 1GB --type files --no-form
 | `--min` | `100MB` | minimum size (`500MB`, `1GiB`, …) |
 | `--type` | `all` | `all`, `dirs` or `files` |
 | `--no-form` | `false` | scan immediately |
+| `--version` | | print version |
 
 ### Keys
 
@@ -38,12 +39,13 @@ heft ~/Work ~/Downloads --min 1GB --type files --no-form
 | `r` | rescan |
 | `n` | new search |
 | `?` | help |
-| `q` | quit |
+| `q` / `ctrl+c` | quit |
 
 ### Notes
 
-- Sizes are actual disk usage. Hard links count once; symlinks aren't followed; other volumes are skipped.
-- macOS protects some folders. Grant your terminal **Full Disk Access** (System Settings → Privacy & Security) for complete results.
+- Sizes are actual disk usage. Hard links count once; symlinks aren't followed; other volumes are skipped (scanning `/` includes the Data volume).
+- Skipped by default: `/System`, `/Volumes`, `/dev`, swap, iCloud Drive, `~/Library/CloudStorage` (Dropbox, OneDrive…) and the Trash.
+- macOS protects some folders. Without **Full Disk Access** for your terminal (System Settings → Privacy & Security), scanning `~` may trigger several permission prompts and skip protected folders.
 
 ## License
 

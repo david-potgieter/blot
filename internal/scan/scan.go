@@ -69,7 +69,8 @@ func DefaultExcludes(home string) []string {
 		"/Volumes",
 		"/dev",
 		"/private/var/vm",
-		filepath.Join(home, "Library", "Mobile Documents"),
+		filepath.Join(home, "Library", "Mobile Documents"), // iCloud Drive
+		filepath.Join(home, "Library", "CloudStorage"),     // Dropbox, OneDrive, Google Drive
 		filepath.Join(home, ".Trash"),
 	}
 }
@@ -153,7 +154,7 @@ func (s *scanner) scanRoot(ctx context.Context, root string) (*Node, error) {
 
 	s.nodes = map[string]*Node{}
 	s.linked = map[inode]bool{}
-	if err := fastwalk.Walk(&fastwalk.Config{}, real, s.walkFn(ctx, real, uint64(st.Dev))); err != nil {
+	if err := fastwalk.Walk(&fastwalk.Config{}, real, s.walkFn(ctx, real, rootDevices(real, st))); err != nil {
 		return nil, err
 	}
 	n := s.nodes[real]
@@ -164,7 +165,22 @@ func (s *scanner) scanRoot(ctx context.Context, root string) (*Node, error) {
 	return n, nil
 }
 
-func (s *scanner) walkFn(ctx context.Context, root string, dev uint64) fs.WalkDirFunc {
+// rootDevices lists the filesystems a walk from root may enter. On macOS 10.15+
+// "/" is the sealed system volume and /Users, /Applications etc. are firmlinks
+// into the Data volume, so scanning "/" must include that device too.
+// (/System, which holds /System/Volumes/Data, is a default exclude, so nothing
+// is counted twice.)
+func rootDevices(root string, st *syscall.Stat_t) map[uint64]bool {
+	devs := map[uint64]bool{uint64(st.Dev): true}
+	if root == "/" {
+		if info, err := os.Lstat("/System/Volumes/Data"); err == nil {
+			devs[uint64(info.Sys().(*syscall.Stat_t).Dev)] = true
+		}
+	}
+	return devs
+}
+
+func (s *scanner) walkFn(ctx context.Context, root string, devs map[uint64]bool) fs.WalkDirFunc {
 	return func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -198,7 +214,7 @@ func (s *scanner) walkFn(ctx context.Context, root string, dev uint64) fs.WalkDi
 		}
 		usage := st.Blocks * 512
 		if d.IsDir() {
-			if uint64(st.Dev) != dev {
+			if !devs[uint64(st.Dev)] {
 				return fs.SkipDir // different filesystem (mount point)
 			}
 			s.addDir(path, root, info.ModTime(), usage)
