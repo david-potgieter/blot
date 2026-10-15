@@ -185,16 +185,98 @@ func TestTickStreamsSnapshot(t *testing.T) {
 	a.Update(tickMsg{a.jobID - 1}) // stale tick ignored
 }
 
+func TestTypingInFormDoesNotTriggerResultKeys(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true})
+	finish(t, a)
+	id := a.jobID
+	a.Update(keyTab) // focus form (Folders)
+	for _, k := range []string{"q", "r", "s"} {
+		_, cmd := a.Update(press(k))
+		if cmd != nil {
+			if _, ok := cmd().(tea.QuitMsg); ok {
+				t.Fatalf("%q in form quit", k)
+			}
+		}
+	}
+	if a.jobID != id || a.tree.tree.Sort() != tree.BySize {
+		t.Error("form typing triggered rescan or sort")
+	}
+	if !strings.HasSuffix(a.form.roots.Value(), "qrs") {
+		t.Errorf("roots = %q", a.form.roots.Value())
+	}
+}
+
+func TestSubmitWhileScanningRestartsWhenFormChanged(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true})
+	old := a.jobID
+	a.form.roots.SetValue(t.TempDir())
+	if a.scanning && !a.stale() {
+		t.Fatal("expected stale")
+	}
+	a.Update(submitMsg{})
+	if a.jobID != old+1 {
+		t.Fatalf("expected a new scan, id %d → %d", old, a.jobID)
+	}
+	a.Update(jobDoneMsg{old}) // the old job's done message is ignored
+	finish(t, a)
+	if a.err != nil || a.scanning {
+		t.Errorf("err=%v scanning=%v", a.err, a.scanning)
+	}
+}
+
+func TestTickKeepsExpansionAndCursor(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true})
+	finish(t, a)
+	a.Update(press("down"))  // big (largest child)
+	a.Update(press("down"))  // mid
+	a.Update(press("right")) // expand mid
+	a.Update(press("down"))  // mid/f
+	want := a.tree.current().Path
+	a.scanning = true // pretend a tick arrives mid-scan
+	a.Update(tickMsg{a.jobID})
+	if got := a.tree.current().Path; got != want {
+		t.Errorf("cursor moved to %s, want %s", got, want)
+	}
+}
+
+func TestRaisingMinMovesCursorToAncestor(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true})
+	finish(t, a)
+	a.Update(press("down"))
+	a.Update(press("down"))
+	a.Update(press("right"))
+	a.Update(press("down")) // mid/f (1.5MB)
+	a.form.min.SetValue("2MB")
+	a.rebuild(false)
+	if got := a.tree.current().Path; got != dir {
+		t.Errorf("cursor on %s, want root %s", got, dir)
+	}
+}
+
+func TestFormFitsPane(t *testing.T) {
+	f := newTestForm()
+	f.setWidth(formWidth - 4)
+	f.roots.SetValue(strings.Repeat("x", 100))
+	for _, line := range strings.Split(f.View(), "\n") {
+		if w := lipgloss.Width(line); w > formWidth-4 && !strings.Contains(line, "not found") {
+			t.Errorf("line %q is %d wide, pane fits %d", line, w, formWidth-4)
+		}
+	}
+}
+
 func TestViewFitsWindow(t *testing.T) {
-	for _, w := range []int{120, 70} {
+	for _, size := range [][2]int{{120, 20}, {70, 20}, {120, 12}} {
+		w, h := size[0], size[1]
 		a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true})
-		a.Update(tea.WindowSizeMsg{Width: w, Height: 20})
+		a.Update(tea.WindowSizeMsg{Width: w, Height: h})
 		finish(t, a)
 		for _, f := range []focus{focusResults, focusForm} {
 			a.setFocus(f)
 			out := a.View().Content
-			if got := lipgloss.Height(out); got != 20 {
-				t.Errorf("w=%d focus=%d: height = %d, want 20", w, f, got)
+			if got := lipgloss.Height(out); got != h {
+				t.Errorf("w=%d h=%d focus=%d: height = %d", w, h, f, got)
 			}
 			if got := lipgloss.Width(out); got != w {
 				t.Errorf("w=%d focus=%d: width = %d, want %d", w, f, got, w)

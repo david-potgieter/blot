@@ -33,6 +33,25 @@ type formModel struct {
 	focused    bool // pane has keyboard focus
 	scanning   bool // button shows Cancel
 	styles     styles
+	cache      *rootsCache // shared across copies; parseRoots stats the disk
+}
+
+type rootsCache struct {
+	val   string
+	roots []string
+	err   error
+	ok    bool
+}
+
+// parsedRoots parses the Folders field, re-checking the disk only when it changes.
+func (f formModel) parsedRoots() ([]string, error) {
+	v := f.roots.Value()
+	if c := f.cache; c.ok && c.val == v {
+		return c.roots, c.err
+	}
+	roots, err := parseRoots(v)
+	*f.cache = rootsCache{val: v, roots: roots, err: err, ok: true}
+	return roots, err
 }
 
 func newFormModel(v formValues, st styles) formModel {
@@ -48,6 +67,7 @@ func newFormModel(v formValues, st styles) formModel {
 		min:    input(v.min, "500MB"),
 		typ:    v.typ,
 		styles: st,
+		cache:  &rootsCache{},
 	}
 }
 
@@ -55,9 +75,11 @@ func (f formModel) values() formValues {
 	return formValues{roots: f.roots.Value(), min: f.min.Value(), typ: f.typ}
 }
 
+// setWidth fits the form into w cells. Inputs are indented 2 and textinput
+// renders one cell wider than its width (for the cursor).
 func (f *formModel) setWidth(w int) {
-	f.roots.SetWidth(max(1, w-1))
-	f.min.SetWidth(max(1, w-1))
+	f.roots.SetWidth(max(1, w-3))
+	f.min.SetWidth(max(1, w-3))
 }
 
 // setFocused gives or takes keyboard focus for the whole pane.
@@ -128,7 +150,7 @@ func (f formModel) View() string {
 	var b strings.Builder
 
 	b.WriteString(label(fieldRoots, "Folders") + "\n  " + f.roots.View() + "\n")
-	if _, err := parseRoots(f.roots.Value()); err != nil {
+	if _, err := f.parsedRoots(); err != nil {
 		b.WriteString("  " + s.err.Render(err.Error()) + "\n")
 	}
 

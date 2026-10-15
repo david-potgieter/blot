@@ -50,15 +50,16 @@ Fields in order: Folders (text), Min size (text), Show (‹ all/dirs/files ›, 
 ### scan
 
 ```go
-func Start(ctx context.Context, roots []string, opts Options) *Scan  // runs in background
-func (s *Scan) Progress() Progress
-func (s *Scan) Snapshot(min int64) []*Node   // deep copy of nodes with Size >= min (roots always)
-func (s *Scan) Done() <-chan struct{}
-func (s *Scan) Result() (*Result, error)     // valid after Done
+func Start(ctx context.Context, roots []string, opts Options) *Job  // runs in background
+func (s *Job) Progress() Progress
+func (s *Job) Snapshot(min int64) []*Node   // deep copy of nodes with Size >= min (roots always)
+func (s *Job) Done() <-chan struct{}
+func (s *Job) Result() (*Result, error)     // valid after Done
 func Scan(ctx, roots, opts, progress) (*Result, error) // kept: wraps Start, for tests/headless
 ```
 
-- Live nodes are internal (`live` struct: atomic size, children under mutex). File and dir usage is added atomically to the node and every ancestor when found, so partial recursive sizes are always consistent. `sumDirs` removed.
+- Live nodes are internal (`live` struct, all fields under the job mutex). File and dir usage is added to the node and every ancestor under the lock when found, so snapshots always satisfy parent ≥ sum of children. `sumDirs` removed. (One lock per file; benchmark on big trees later.)
+- The UI snapshots at the current filter min (≥ floor), re-snapshotting when min changes, so per-tick cost tracks what is shown.
 - `Snapshot` holds the scanner mutex while copying; copies only nodes with size ≥ min, so cost ∝ visible nodes. Copies are plain `Node`s (existing type) safe to read without locks.
 - `Result.Roots` = `Snapshot(FileFloor)` at completion. Cancel → `Result()` returns partial result + `context.Canceled`.
 - Multiple roots scanned sequentially; snapshot includes finished roots and the one in progress.
@@ -66,7 +67,8 @@ func Scan(ctx, roots, opts, progress) (*Result, error) // kept: wraps Start, for
 
 ### tree
 
-- `Tree` gains path-keyed expansion: `ExpandedPaths() map[string]bool` and `NewWithExpanded(roots, filter, sort, expanded)`; default (nil) = roots expanded.
+- `Tree` gains path-keyed expansion: `ExpandedPaths() map[string]bool` and `Rebuild(roots, filter, sort, expanded)`; roots not in the map start expanded, collapse is recorded as false.
+- While scanning, Search restarts (instead of cancelling) if the form now differs from the running search.
 
 ### ui
 

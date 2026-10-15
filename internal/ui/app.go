@@ -66,6 +66,7 @@ type App struct {
 	scanning  bool
 	cancelled bool
 	snapshot  []*scan.Node
+	snapMin   int64 // min the snapshot was taken at; only nodes ≥ it were copied
 	progress  scan.Progress
 	err       error // scan failed outright (e.g. a root became unreadable)
 	filter    tree.Filter
@@ -110,7 +111,7 @@ func (a *App) startScan() tea.Cmd {
 	v := a.form.values()
 	p, err := v.params()
 	if err != nil {
-		return nil // the form shows the error inline
+		return a.setFocus(focusForm) // the form shows the error inline
 	}
 	a.stopScan()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -123,7 +124,7 @@ func (a *App) startScan() tea.Cmd {
 	a.form.scanning = true
 	a.snapshot, a.progress, a.err = nil, scan.Progress{}, nil
 	a.tree.setTree(nil) // new search: fresh expansion state
-	a.rebuild()
+	a.rebuild(true)
 	return tea.Batch(a.setFocus(focusResults), tick(a.jobID), waitJob(a.job, a.jobID))
 }
 
@@ -148,6 +149,7 @@ func waitJob(job *scan.Job, id int) tea.Cmd {
 
 func (a *App) setFocus(f focus) tea.Cmd {
 	a.focus = f
+	a.layout() // in narrow mode the visible pane depends on focus
 	return a.form.setFocused(f == focusForm)
 }
 
@@ -162,12 +164,18 @@ func (a *App) currentFilter() tree.Filter {
 	return f
 }
 
-// rebuild re-filters the latest snapshot, keeping sort, expansion and cursor.
-func (a *App) rebuild() {
+// rebuild re-filters results, keeping sort, expansion and cursor. The job is
+// re-snapshotted when fresh (new scan data) or when the min changes, and only
+// at the current min, so per-tick cost tracks what is shown, not the floor.
+func (a *App) rebuild(fresh bool) {
 	if a.job == nil {
 		return
 	}
 	a.filter = a.currentFilter()
+	if fresh || a.filter.Min != a.snapMin {
+		a.snapshot = a.job.Snapshot(a.filter.Min)
+		a.snapMin = a.filter.Min
+	}
 	sort, expanded := tree.BySize, map[string]bool(nil)
 	if a.tree.tree != nil {
 		sort, expanded = a.tree.tree.Sort(), a.tree.tree.ExpandedPaths()
@@ -180,7 +188,7 @@ func (a *App) stale() bool {
 	if a.job == nil {
 		return false
 	}
-	roots, err := parseRoots(a.form.roots.Value())
+	roots, err := a.form.parsedRoots()
 	if err == nil && !slices.Equal(roots, a.jobParams.Roots) {
 		return true
 	}
@@ -208,8 +216,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.progress = a.job.Progress()
-		a.snapshot = a.job.Snapshot(a.floor)
-		a.rebuild()
+		a.rebuild(true)
 		return a, tick(a.jobID)
 
 	case jobDoneMsg:
@@ -220,18 +227,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cancel()
 		a.scanning = false
 		a.form.scanning = false
-		if err != nil && !errors.Is(err, context.Canceled) {
+		// Trust the job, not the cancel flag: it may have finished first.
+		a.cancelled = errors.Is(err, context.Canceled)
+		if err != nil && !a.cancelled {
 			a.err = err
 		}
 		if res != nil {
-			a.snapshot = res.Roots
 			a.progress = scan.Progress{Files: res.Files, Dirs: res.Dirs, Bytes: res.Bytes, Errors: res.ErrorCount}
 		}
-		a.rebuild()
+		a.rebuild(true)
 		return a, nil
 
 	case submitMsg:
-		if a.scanning {
+		// While scanning the button cancels, unless the form now asks for a
+		// different search, in which case it restarts.
+		if a.scanning && !a.stale() {
 			a.stopScan()
 			return a, nil
 		}
@@ -248,7 +258,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			a.form, cmd = a.form.Update(msg)
-			a.rebuild() // min/type edits re-filter immediately
+			a.form.scanning = a.scanning && !a.stale()
+			a.rebuild(false) // min/type edits re-filter immediately
 			return a, cmd
 		}
 		switch msg.String() {
@@ -265,9 +276,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
-	// Cursor blink and other input messages.
+	// Cursor blink, paste and other input messages.
 	var cmd tea.Cmd
 	a.form, cmd = a.form.Update(msg)
+	if _, ok := msg.(tea.PasteMsg); ok {
+		a.form.scanning = a.scanning && !a.stale()
+		a.rebuild(false)
+	}
 	return a, cmd
 }
 
@@ -302,7 +317,6 @@ func (a *App) layout() {
 }
 
 func (a *App) View() tea.View {
-	a.layout() // focus changes alter pane widths in narrow mode
 	fw, rw := a.paneWidths()
 	h := a.paneHeight()
 
@@ -312,14 +326,14 @@ func (a *App) View() tea.View {
 		if a.focus == focusForm {
 			st = a.styles.focusedPane
 		}
-		panes = append(panes, st.Width(fw).Height(h).Render(a.styles.title.Render("Search")+"\n\n"+a.form.View()))
+		panes = append(panes, st.Width(fw).Height(h).MaxHeight(h).Render(a.styles.title.Render("Search")+"\n\n"+a.form.View()))
 	}
 	if rw > 0 {
 		st := a.styles.pane
 		if a.focus == focusResults {
 			st = a.styles.focusedPane
 		}
-		panes = append(panes, st.Width(rw).Height(h).Render(a.resultsView(rw-4)))
+		panes = append(panes, st.Width(rw).Height(h).MaxHeight(h).Render(a.resultsView(rw-4)))
 	}
 
 	bindings := formHelp()
@@ -357,15 +371,16 @@ func (a *App) resultsView(w int) string {
 	if a.tree.tree != nil {
 		parts = append(parts, fmt.Sprintf("%d matches", a.tree.tree.MatchCount()))
 	}
-	header := strings.Join(parts, s.subtle.Render(" · "))
-	switch {
-	case a.err != nil:
-		header += " · " + s.err.Render(a.err.Error())
-	case a.stale():
-		header += " · " + s.err.Render("press Search to rescan")
-	case p.Errors > 0:
-		header += " · " + s.err.Render(fmt.Sprintf("%d unreadable (Full Disk Access?)", p.Errors))
+	if p.Errors > 0 {
+		parts = append(parts, s.err.Render(fmt.Sprintf("%d unreadable (Full Disk Access?)", p.Errors)))
 	}
+	if a.stale() {
+		parts = append(parts, s.err.Render("press Search to rescan"))
+	}
+	if a.err != nil {
+		parts = append(parts, s.err.Render(a.err.Error()))
+	}
+	header := strings.Join(parts, s.subtle.Render(" · "))
 	header = lipgloss.NewStyle().MaxWidth(w).Render(header)
 	return header + "\n\n" + a.tree.View()
 }

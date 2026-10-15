@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -47,11 +48,21 @@ func (m *treeModel) setTree(t *tree.Tree) {
 	if t != nil {
 		m.rows = t.Rows()
 	}
+	// Follow the node; if it was filtered out, fall back to its nearest visible ancestor.
+	index := make(map[string]int, len(m.rows))
 	for i, r := range m.rows {
-		if r.Node.Path == cur {
+		index[r.Node.Path] = i
+	}
+	for p := cur; p != ""; {
+		if i, ok := index[p]; ok {
 			m.cursor = i
 			break
 		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			break
+		}
+		p = parent
 	}
 	m.refresh()
 }
