@@ -144,6 +144,18 @@ func TestCollapseAndDepth(t *testing.T) {
 	eq(t, names(tr.Rows()), []string{"root", "big", "other", "movie.mp4"})
 }
 
+func TestRebuildKeepsExpansionAndSort(t *testing.T) {
+	tr := New([]*scan.Node{sample()}, Filter{Min: 280, Type: All})
+	tr.Expand(tr.Rows()[1].Node) // big
+	tr.SetSort(ByName)
+	// A fresh copy of the same tree, as a new snapshot would give.
+	tr2 := Rebuild([]*scan.Node{sample()}, tr.Filter(), tr.Sort(), tr.ExpandedPaths())
+	eq(t, names(tr2.Rows()), []string{"root", "big", "nm", "other"})
+	if tr2.Sort() != ByName {
+		t.Error("sort not carried over")
+	}
+}
+
 func TestSortSizeDesc(t *testing.T) {
 	tr := New([]*scan.Node{dir("r", 10, dir("a", 1), dir("b", 5))}, Filter{})
 	eq(t, names(tr.Rows()), []string{"r", "b", "a"})

@@ -88,19 +88,39 @@ type Tree struct {
 	filter   Filter
 	sort     SortBy
 	kids     map[*scan.Node][]*scan.Node // visible children, sorted
-	expanded map[*scan.Node]bool
+	expanded map[string]bool             // by path, so state survives rebuilds from new snapshots
 	matches  int
 }
 
 // New computes visibility once. Roots are always shown and start expanded.
 func New(roots []*scan.Node, f Filter) *Tree {
-	t := &Tree{roots: roots, filter: f, kids: map[*scan.Node][]*scan.Node{}, expanded: map[*scan.Node]bool{}}
+	return Rebuild(roots, f, BySize, nil)
+}
+
+// Rebuild is New with a sort order and expanded paths carried over from a
+// previous tree (see ExpandedPaths). A nil expanded map expands the roots.
+func Rebuild(roots []*scan.Node, f Filter, s SortBy, expanded map[string]bool) *Tree {
+	t := &Tree{roots: roots, filter: f, sort: s, kids: map[*scan.Node][]*scan.Node{}, expanded: map[string]bool{}}
+	for p, e := range expanded {
+		t.expanded[p] = e
+	}
 	for _, r := range roots {
 		t.visit(r)
-		t.expanded[r] = true
+		if expanded == nil {
+			t.expanded[r.Path] = true
+		}
 	}
 	t.sortAll()
 	return t
+}
+
+// ExpandedPaths returns a copy of the expanded paths, for Rebuild.
+func (t *Tree) ExpandedPaths() map[string]bool {
+	out := make(map[string]bool, len(t.expanded))
+	for p, e := range t.expanded {
+		out[p] = e
+	}
+	return out
 }
 
 // visit caches visible children of n and reports whether n is visible.
@@ -165,12 +185,12 @@ func (t *Tree) compare(a, b *scan.Node) int {
 // Expand opens n if it has visible children.
 func (t *Tree) Expand(n *scan.Node) {
 	if len(t.kids[n]) > 0 {
-		t.expanded[n] = true
+		t.expanded[n.Path] = true
 	}
 }
 
 // Collapse closes n.
-func (t *Tree) Collapse(n *scan.Node) { delete(t.expanded, n) }
+func (t *Tree) Collapse(n *scan.Node) { delete(t.expanded, n.Path) }
 
 // Rows flattens visible, expanded nodes depth-first.
 func (t *Tree) Rows() []Row {
@@ -178,7 +198,7 @@ func (t *Tree) Rows() []Row {
 	var walk func(n *scan.Node, depth int)
 	walk = func(n *scan.Node, depth int) {
 		kids := t.kids[n]
-		exp := t.expanded[n] && len(kids) > 0
+		exp := t.expanded[n.Path] && len(kids) > 0
 		rows = append(rows, Row{Node: n, Depth: depth, Expanded: exp, HasChildren: len(kids) > 0, Context: !t.filter.Matches(n)})
 		if exp {
 			for _, c := range kids {
