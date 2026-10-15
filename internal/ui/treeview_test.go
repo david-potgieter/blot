@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/david-potgieter/heft/internal/scan"
 	"github.com/david-potgieter/heft/internal/tree"
@@ -104,6 +106,49 @@ func TestTreeSortKeepsCursorOnNode(t *testing.T) {
 	m = send(m, "s")
 	if got := m.current().Name; got != "z" || m.cursor != 2 {
 		t.Fatalf("after sort = %s at %d, want z at 2", got, m.cursor)
+	}
+}
+
+// bigTree has a root with n child dirs of descending size.
+func bigTree(n, w, h int) treeModel {
+	root := &scan.Node{Name: "/r", Path: "/r", IsDir: true, Size: int64(n * 1000)}
+	for i := range n {
+		c := &scan.Node{Name: fmt.Sprintf("d%02d", i), IsDir: true, Size: int64((n - i) * 10), Parent: root}
+		root.Children = append(root.Children, c)
+	}
+	res := &scan.Result{Roots: []*scan.Node{root}, ErrorCount: 3}
+	return newTreeModel(res, Params{Roots: []string{"/r"}}, newStyles(true), w, h)
+}
+
+func TestTreeScrollMovesCursorBeforeWindow(t *testing.T) {
+	m := send(bigTree(30, 80, 15), "G")
+	if m.cursor != 30 {
+		t.Fatalf("cursor = %d", m.cursor)
+	}
+	offset := m.offset
+	if offset == 0 {
+		t.Fatal("expected list to scroll at bottom")
+	}
+	m = send(m, "up")
+	if m.offset != offset || m.cursor != 29 {
+		t.Errorf("up from bottom: offset %d→%d, cursor %d; want window fixed", offset, m.offset, m.cursor)
+	}
+	m = send(m, "g")
+	if m.offset != 0 {
+		t.Errorf("offset after g = %d", m.offset)
+	}
+}
+
+func TestTreeViewFitsWindow(t *testing.T) {
+	for _, keys := range [][]string{nil, {"G"}, {"?"}} {
+		m := send(bigTree(30, 40, 15), keys...)
+		out := m.View()
+		if got := lipgloss.Height(out); got != 15 {
+			t.Errorf("keys %v: height = %d, want 15", keys, got)
+		}
+		if got := lipgloss.Width(out); got > 40 {
+			t.Errorf("keys %v: width = %d, want <= 40", keys, got)
+		}
 	}
 }
 

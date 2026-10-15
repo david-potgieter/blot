@@ -52,9 +52,26 @@ func newTreeModel(res *scan.Result, p Params, st styles, w, h int) treeModel {
 	return m
 }
 
+// refresh rebuilds rows, clamps the cursor and scrolls just enough to keep it visible.
 func (m *treeModel) refresh() {
 	m.rows = m.tree.Rows()
 	m.cursor = max(0, min(m.cursor, len(m.rows)-1))
+	h := m.listHeight()
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.cursor >= m.offset+h {
+		m.offset = m.cursor - h + 1
+	}
+	m.offset = max(0, min(m.offset, len(m.rows)-h))
+}
+
+// listHeight is the number of rows that fit between header and footer.
+func (m treeModel) listHeight() int {
+	if m.height <= 0 {
+		return max(1, len(m.rows))
+	}
+	return max(1, m.height-3-lipgloss.Height(m.help.View(m.keys)))
 }
 
 func (m treeModel) current() *scan.Node { return m.rows[m.cursor].Node }
@@ -64,7 +81,14 @@ func (m treeModel) Update(msg tea.Msg) (treeModel, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.help.SetWidth(msg.Width)
+		m.refresh()
 	case tea.KeyPressMsg:
+		if len(m.rows) == 0 {
+			if key.Matches(msg, m.keys.Quit) {
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
@@ -88,7 +112,8 @@ func (m treeModel) Update(msg tea.Msg) (treeModel, tea.Cmd) {
 				m.tree.SetSort(tree.BySize)
 			}
 			// Keep the cursor on the same node after rows are reordered.
-			for i, r := range m.tree.Rows() {
+			m.rows = m.tree.Rows()
+			for i, r := range m.rows {
 				if r.Node == cur {
 					m.cursor = i
 					break
@@ -141,29 +166,27 @@ func (m treeModel) View() string {
 	}
 	helpView := m.help.View(m.keys)
 
-	listHeight := len(m.rows)
-	if m.height > 0 {
-		listHeight = max(1, m.height-3-lipgloss.Height(helpView))
-	}
-	offset := m.offset
-	if m.cursor < offset {
-		offset = m.cursor
-	}
-	if m.cursor >= offset+listHeight {
-		offset = m.cursor - listHeight + 1
-	}
-	end := min(len(m.rows), offset+listHeight)
+	listHeight := m.listHeight()
+	end := min(len(m.rows), m.offset+listHeight)
 
 	var b strings.Builder
-	b.WriteString(header + "\n\n")
-	for i := offset; i < end; i++ {
+	b.WriteString(m.fit(header) + "\n\n")
+	for i := m.offset; i < end; i++ {
 		b.WriteString(m.renderRow(m.rows[i], i == m.cursor) + "\n")
 	}
-	for i := end - offset; i < listHeight; i++ {
+	for i := end - m.offset; i < listHeight; i++ {
 		b.WriteString("\n")
 	}
-	b.WriteString(footer + "\n" + helpView)
+	b.WriteString(m.fit(footer) + "\n" + helpView)
 	return b.String()
+}
+
+// fit truncates a line to the window width so it never wraps.
+func (m treeModel) fit(line string) string {
+	if m.width <= 0 {
+		return line
+	}
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(line)
 }
 
 func (m treeModel) renderRow(r tree.Row, selected bool) string {
@@ -181,34 +204,36 @@ func (m treeModel) renderRow(r tree.Row, selected bool) string {
 	if n.IsDir && r.Depth > 0 {
 		name += "/"
 	}
+	sz := fmt.Sprintf("%9s", size.Format(n.Size))
+	filled := barFill(n)
+	full, empty := strings.Repeat("█", filled), strings.Repeat("░", barWidth-filled)
+	indent := strings.Repeat("  ", r.Depth)
+	mod := humanize.Time(n.ModTime)
+
+	// The selected row is styled as one plain string: inner style resets would
+	// otherwise cancel the reverse highlight.
+	if selected {
+		return m.fit(s.selected.Render(fmt.Sprintf("%s %s%s %s%s%s  %s", sz, full, empty, indent, marker, name, mod)))
+	}
 	nameStyle := lipgloss.NewStyle()
 	if r.Context {
 		nameStyle = s.context
 	}
-
-	line := fmt.Sprintf("%s %s %s%s%s  %s",
-		s.size.Render(fmt.Sprintf("%9s", size.Format(n.Size))),
-		m.bar(n),
-		strings.Repeat("  ", r.Depth),
+	return m.fit(fmt.Sprintf("%s %s %s%s%s  %s",
+		s.size.Render(sz),
+		s.bar.Render(full)+s.barEmpty.Render(empty),
+		indent,
 		s.marker.Render(marker),
 		nameStyle.Render(name),
-		s.subtle.Render(humanize.Time(n.ModTime)),
-	)
-	if selected {
-		line = s.selected.Render(line)
-	}
-	if m.width > 0 {
-		line = lipgloss.NewStyle().MaxWidth(m.width).Render(line)
-	}
-	return line
+		s.subtle.Render(mod),
+	))
 }
 
-// bar shows n's share of its parent (roots are full).
-func (m treeModel) bar(n *scan.Node) string {
+// barFill is how many of barWidth cells n's share of its parent fills (roots are full).
+func barFill(n *scan.Node) int {
 	filled := barWidth
 	if p := n.Parent; p != nil && p.Size > 0 {
 		filled = int(float64(n.Size)/float64(p.Size)*barWidth + 0.5)
 	}
-	filled = max(0, min(barWidth, filled))
-	return m.styles.bar.Render(strings.Repeat("█", filled)) + m.styles.barEmpty.Render(strings.Repeat("░", barWidth-filled))
+	return max(0, min(barWidth, filled))
 }
