@@ -89,13 +89,21 @@ func TestTreeSortToggle(t *testing.T) {
 }
 
 func TestTreeSortKeepsCursorOnNode(t *testing.T) {
-	m := send(newTestTree(), "down", "down")
-	if got := m.current().Name; got != "b" {
-		t.Fatalf("before sort = %s", got)
+	// Size order is z, a; name order is a, z — so z changes row on sort.
+	root := &scan.Node{Name: "/r", Path: "/r", IsDir: true, Size: 3_000_000}
+	z := &scan.Node{Name: "z", Path: "/r/z", IsDir: true, Size: 2_000_000, Parent: root}
+	a := &scan.Node{Name: "a", Path: "/r/a", IsDir: true, Size: 1_000_000, Parent: root}
+	root.Children = []*scan.Node{a, z}
+	res := &scan.Result{Roots: []*scan.Node{root}}
+	m := newTreeModel(res, Params{Roots: []string{"/r"}, Min: 0}, newStyles(true), 100, 30)
+
+	m = send(m, "down")
+	if got := m.current().Name; got != "z" || m.cursor != 1 {
+		t.Fatalf("before sort = %s at %d", got, m.cursor)
 	}
 	m = send(m, "s")
-	if got := m.current().Name; got != "b" {
-		t.Fatalf("after sort = %s, want cursor to stay on b", got)
+	if got := m.current().Name; got != "z" || m.cursor != 2 {
+		t.Fatalf("after sort = %s at %d, want z at 2", got, m.cursor)
 	}
 }
 
