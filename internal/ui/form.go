@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
@@ -95,13 +96,18 @@ const maxSuggestions = 50
 // within one folder reads it once. It is shared across copies.
 type dirList struct {
 	dir          string
-	names, lower []string // lower is names lowercased, for matching
+	mod          time.Time // dir's mtime when listed; it changes when entries are added or removed
+	names, lower []string  // lower is names lowercased, for matching
 }
 
 // subdirs lists the folders (and symlinks to folders) in dir, sorted, with
-// their lowercased names.
+// their lowercased names. The listing is reused until dir's mtime changes.
 func (l *dirList) subdirs(dir string) (names, lower []string) {
-	if l.dir == dir && l.names != nil {
+	var mod time.Time
+	if st, err := os.Stat(dir); err == nil {
+		mod = st.ModTime()
+	}
+	if l.dir == dir && l.names != nil && !mod.IsZero() && mod.Equal(l.mod) {
 		return l.names, l.lower
 	}
 	entries, _ := os.ReadDir(dir)
@@ -117,7 +123,7 @@ func (l *dirList) subdirs(dir string) (names, lower []string) {
 			lower = append(lower, strings.ToLower(e.Name()))
 		}
 	}
-	l.dir, l.names, l.lower = dir, names, lower
+	l.dir, l.mod, l.names, l.lower = dir, mod, names, lower
 	return names, lower
 }
 
@@ -125,14 +131,15 @@ func (l *dirList) subdirs(dir string) (names, lower []string) {
 // are whole field values, since the input matches them against everything typed.
 func (f *formModel) suggest() {
 	v := f.roots.Value()
-	last := strings.TrimLeft(v[strings.LastIndex(v, ",")+1:], " ")
+	last := strings.TrimLeft(v[lastSeparator(v)+1:], " ")
 	if last == "" {
 		f.roots.SetSuggestions(nil)
 		return
 	}
 	head := v[:len(v)-len(last)]
 	slash := strings.LastIndex(last, "/") + 1
-	typedDir, base := last[:slash], last[slash:]
+	typedDir := last[:slash]
+	base := unescapeRoot(last[slash:]) // matched against real names
 	if base == "" {
 		// Nothing typed of the next name yet: offering its first subfolder
 		// would make tab complete forever instead of leaving the field.
@@ -140,7 +147,7 @@ func (f *formModel) suggest() {
 		return
 	}
 
-	dir := typedDir
+	dir := unescapeRoot(typedDir)
 	switch {
 	case dir == "":
 		dir = "."
@@ -161,7 +168,7 @@ func (f *formModel) suggest() {
 			continue // hidden folders only once a dot is typed
 		}
 		if name != base && strings.HasPrefix(lower[i], lowerBase) {
-			out = append(out, head+typedDir+name+"/")
+			out = append(out, head+typedDir+escapeRoot(name)+"/")
 			if len(out) == maxSuggestions {
 				break
 			}

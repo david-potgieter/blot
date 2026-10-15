@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -427,6 +428,27 @@ func TestTrashedResultsDropOut(t *testing.T) {
 	}
 }
 
+// Something trashed while hidden by the filter must not come back when the filter is lowered.
+func TestTrashedHiddenResultsStayGone(t *testing.T) {
+	dir := fixtureDir(t)
+	bin := t.TempDir()
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true, Bin: bin})
+	finish(t, a)
+	a.form.min.SetValue("2MB") // mid (1.5MB) is now hidden
+	a.rebuild(false)
+	if err := os.Rename(filepath.Join(dir, "mid"), filepath.Join(bin, "mid")); err != nil {
+		t.Fatal(err)
+	}
+	_, cmd := a.Update(a.refreshBin()())
+	a.Update(cmd())
+
+	a.form.min.SetValue("1MB")
+	a.rebuild(false)
+	if got := strings.Join(names(a), ","); got != dir+",big" {
+		t.Errorf("rows = %s, want the trashed mid gone", got)
+	}
+}
+
 func TestQuitSavesAndPlainStartRestores(t *testing.T) {
 	dir := fixtureDir(t)
 	path := filepath.Join(t.TempDir(), "blot", "session.gob.gz")
@@ -478,6 +500,25 @@ func TestQuitSavesAndPlainStartRestores(t *testing.T) {
 	}
 }
 
+// Quitting with an invalid Min, then restoring, must not snapshot everything (min 0).
+func TestRestoreWithInvalidMinKeepsScannedMin(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s")
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "2MB", Type: "all", SkipForm: true, Session: path, Bin: t.TempDir()})
+	finish(t, a)
+	a.form.min.SetValue("oops")
+	a.Update(press("q"))
+
+	b := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Session: path, Restore: true, Bin: t.TempDir()})
+	if b.snapMin != 2_000_000 || b.filter.Min != 2_000_000 {
+		t.Errorf("snapMin=%d filter.Min=%d, want the scanned 2MB", b.snapMin, b.filter.Min)
+	}
+	b.form.min.SetValue("")
+	b.rebuild(false)
+	if b.filter.Min != 2_000_000 {
+		t.Errorf("cleared min: filter.Min=%d", b.filter.Min)
+	}
+}
+
 func TestQuitMidScanSavesPartial(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s")
 	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true, Session: path})
@@ -522,6 +563,78 @@ func TestRestoredScrollPosition(t *testing.T) {
 	}
 }
 
+// Keys that don't change the filter must not rebuild the tree (it's slow on big results).
+func TestFormKeysRebuildOnlyWhenFilterChanges(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", SkipForm: true, Bin: t.TempDir()})
+	finish(t, a)
+	a.Update(keyShiftTab) // results → bin
+	a.Update(keyShiftTab) // → form, Folders
+	before := a.tree.tree
+	a.Update(press("x"))
+	a.Update(keyDown)
+	if a.tree.tree != before {
+		t.Error("typing in Folders / moving fields rebuilt the tree")
+	}
+	a.Update(press("0")) // Min 1MB → 1MB0: invalid, filter unchanged
+	if a.tree.tree != before {
+		t.Error("invalid Min rebuilt the tree")
+	}
+	for range len("1MB0") {
+		a.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	a.Update(press("2"))
+	a.Update(press("M"))
+	a.Update(press("B")) // 2MB
+	if a.tree.tree == before || a.filter.Min != 2_000_000 {
+		t.Errorf("changing Min didn't re-filter: min=%d", a.filter.Min)
+	}
+}
+
+// Restoring goes through New before any WindowSizeMsg, as at real startup.
+func TestRestoredScrollSurvivesStartup(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	for i := range 30 {
+		p := filepath.Join(dir, fmt.Sprintf("d%02d", i), "f")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, 8_000+i*100), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "s")
+	size := tea.WindowSizeMsg{Width: 120, Height: 15}
+
+	a, err := New(Config{Roots: dir, Min: "1KB", Type: "dirs", SkipForm: true, Session: path, Bin: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Update(size)
+	finish(t, a)
+	// Scroll down, then move the cursor up within the window, so the offset
+	// isn't simply derivable from the cursor.
+	for range 15 {
+		a.Update(press("down"))
+	}
+	for range 3 {
+		a.Update(press("up"))
+	}
+	wantOffset, wantCursor := a.tree.offset, a.tree.current().Path
+	if wantOffset == 0 || a.tree.cursor == wantOffset {
+		t.Fatalf("fixture should scroll with the cursor mid-window: offset=%d cursor=%d", wantOffset, a.tree.cursor)
+	}
+	a.Update(press("q"))
+
+	b, err := New(Config{Roots: "~", Min: "1KB", Type: "all", Session: path, Restore: true, Bin: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Update(size)
+	if b.tree.offset != wantOffset || b.tree.current().Path != wantCursor {
+		t.Errorf("offset=%d cursor=%s, want %d %s", b.tree.offset, b.tree.current().Path, wantOffset, wantCursor)
+	}
+}
+
 func TestBinAccessDialog(t *testing.T) {
 	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", Bin: t.TempDir()})
 	a.Update(binMsg{id: a.bin.id, err: &fs.PathError{Op: "open", Path: "x", Err: syscall.EPERM}})
@@ -557,6 +670,17 @@ func TestFormFitsPane(t *testing.T) {
 		if w := lipgloss.Width(line); w > formWidth-4 && !strings.Contains(line, "not found") {
 			t.Errorf("line %q is %d wide, pane fits %d", line, w, formWidth-4)
 		}
+	}
+}
+
+// Under 34 columns errors wrap more than at the pane's usual width; the form
+// must be measured as drawn, or its bottom (button, border) gets clipped.
+func TestNarrowFormIsNotClipped(t *testing.T) {
+	a := newApp(t, Config{Roots: "/no/such/folder/with/a/rather/long/name/indeed/and/then/some/more", Min: "1MB", Type: "all", Bin: t.TempDir()})
+	a.Update(tea.WindowSizeMsg{Width: 22, Height: 40})
+	out := a.View().Content
+	if !strings.Contains(out, "Search ]") || strings.Count(out, "╰") != 2 {
+		t.Errorf("form pane clipped (want button and both bottom borders):\n%s", out)
 	}
 }
 

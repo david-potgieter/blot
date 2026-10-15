@@ -148,6 +148,42 @@ func TestFolderCompletion(t *testing.T) {
 	}
 }
 
+func TestFolderCompletionWithCommas(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "Photos, 2024"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := typeRoots(newTestForm(), dir+"/Pho")
+	want := []string{dir + `/Photos\, 2024/`}
+	if got := f.roots.MatchedSuggestions(); !slices.Equal(got, want) {
+		t.Errorf("suggestions = %q, want %q", got, want)
+	}
+	// Typing the escaped comma keeps completing within that one path.
+	f = typeRoots(f, dir+`/Photos\, 2`)
+	if got := f.roots.MatchedSuggestions(); !slices.Equal(got, want) {
+		t.Errorf("after escaped comma: suggestions = %q, want %q", got, want)
+	}
+}
+
+func TestFolderCompletionSeesNewFolders(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "Work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f := typeRoots(newTestForm(), dir+"/W")
+	if err := os.Mkdir(filepath.Join(dir, "Wiki"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Keep typing in the same folder (retyping the whole path would list
+	// other folders on the way and evict the cache anyway).
+	f, _ = f.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	f, _ = f.Update(press("W"))
+	want := []string{dir + "/Wiki/", dir + "/Work/"}
+	if got := f.roots.MatchedSuggestions(); !slices.Equal(got, want) {
+		t.Errorf("suggestions = %q, want %q (folder created after the first listing)", got, want)
+	}
+}
+
 func TestFolderCompletionIsCapped(t *testing.T) {
 	dir := t.TempDir()
 	for i := range maxSuggestions + 10 {

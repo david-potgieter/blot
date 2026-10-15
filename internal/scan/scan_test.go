@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // du sums on-disk usage (st_blocks*512) of path and everything under it, not following symlinks.
@@ -429,6 +430,32 @@ func TestCancelledJobKeepsPartialResult(t *testing.T) {
 		t.Fatalf("partial result = %+v", res)
 	}
 	checkSums(t, res.Roots[0])
+}
+
+// After Remove drops a dir mid-scan, the walk may still be inside it: what it
+// finds there must not count toward the totals or attach to the tree.
+func TestEntriesUnderRemovedDirAreNotCounted(t *testing.T) {
+	var mod time.Time
+	s := &Job{nodes: map[string]*live{}, linked: map[inode]bool{}, done: make(chan struct{})}
+	s.addDir("/r", "/r", mod, 0)
+	s.addDir("/r/a", "/r", mod, 0)
+	s.addFile("/r/a/x", mod, 100)
+	s.Remove("/r/a")
+
+	if s.addDir("/r/a/b", "/r", mod, 10) {
+		t.Error("dir under a removed dir was attached")
+	}
+	s.addFile("/r/a/y", mod, 100)
+	s.addFile("/r/a/b/z", mod, 100)
+
+	p := s.Progress()
+	root := s.Snapshot(0)[0]
+	if p.Files != 0 || p.Bytes != 0 || p.Dirs != 1 {
+		t.Errorf("totals files=%d bytes=%d dirs=%d, want 0 0 1", p.Files, p.Bytes, p.Dirs)
+	}
+	if root.Size != 0 || len(root.Children) != 0 {
+		t.Errorf("root size=%d children=%d", root.Size, len(root.Children))
+	}
 }
 
 func TestScanSendsProgress(t *testing.T) {

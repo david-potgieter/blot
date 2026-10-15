@@ -327,7 +327,9 @@ func (s *Job) walkFn(ctx context.Context, root string, devs map[uint64]bool) fs.
 			if !devs[uint64(st.Dev)] {
 				return fs.SkipDir // different filesystem (mount point)
 			}
-			s.addDir(path, root, info.ModTime(), usage)
+			if !s.addDir(path, root, info.ModTime(), usage) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if st.Nlink > 1 && !s.firstLink(inode{uint64(st.Dev), st.Ino}) {
@@ -345,34 +347,40 @@ func grow(n *live, usage int64) {
 	}
 }
 
-func (s *Job) addDir(path, root string, mod time.Time, usage int64) {
-	s.dirs.Add(1)
+// addDir adds a dir under its parent and reports whether it was attached. It
+// isn't when its parent is gone (Remove'd mid-scan, or skipped); the caller
+// should then skip its subtree. Counters only include attached entries, so
+// the totals always match the tree.
+func (s *Job) addDir(path, root string, mod time.Time, usage int64) bool {
 	s.current.Store(&path)
 
 	n := &live{name: filepath.Base(path), path: path, isDir: true, mod: mod}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.nodes[path] = n
 	if path == root {
 		n.name = path
 		s.roots = append(s.roots, n)
 	} else if p := s.nodes[filepath.Dir(path)]; p != nil {
 		n.parent = p
 		p.children = append(p.children, n)
+	} else {
+		return false
 	}
+	s.nodes[path] = n
+	s.dirs.Add(1)
 	grow(n, usage)
+	return true
 }
 
 func (s *Job) addFile(path string, mod time.Time, usage int64) {
-	s.files.Add(1)
-	s.bytes.Add(usage)
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.nodes[filepath.Dir(path)]
 	if p == nil {
 		return
 	}
+	s.files.Add(1)
+	s.bytes.Add(usage)
 	if usage >= s.opts.FileFloor {
 		p.children = append(p.children, &live{name: filepath.Base(path), path: path, size: usage, files: 1, fileBytes: usage, mod: mod, parent: p})
 	}

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/david-potgieter/blot/internal/size"
@@ -38,12 +39,53 @@ func (v *formValues) params() (Params, error) {
 	return Params{Roots: roots, Min: minSize, Type: v.typ}, nil
 }
 
+// The Folders field separates paths with commas; a comma inside a path is
+// written as `\,`.
+
+// JoinRoots writes paths as a Folders field value, escaping their commas.
+func JoinRoots(paths []string) string {
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = escapeRoot(p)
+	}
+	return strings.Join(out, ", ")
+}
+
+func escapeRoot(p string) string { return strings.ReplaceAll(p, ",", `\,`) }
+
+func unescapeRoot(p string) string { return strings.ReplaceAll(p, `\,`, ",") }
+
+// lastSeparator is the index of the last unescaped comma in s, or -1.
+func lastSeparator(s string) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == ',' && (i == 0 || s[i-1] != '\\') {
+			return i
+		}
+	}
+	return -1
+}
+
+// splitRoots splits a Folders field value on unescaped commas and unescapes each path.
+func splitRoots(s string) []string {
+	var out []string
+	for {
+		i := lastSeparator(s)
+		out = append(out, unescapeRoot(s[i+1:]))
+		if i < 0 {
+			break
+		}
+		s = s[:i]
+	}
+	slices.Reverse(out)
+	return out
+}
+
 // parseRoots splits comma-separated paths, expands ~/, makes them absolute,
 // drops exact duplicates and checks they exist. Errors name the path as typed.
 func parseRoots(s string) ([]string, error) {
 	var out []string
 	seen := map[string]bool{}
-	for _, typed := range strings.Split(s, ",") {
+	for _, typed := range splitRoots(s) {
 		typed = strings.TrimSpace(typed)
 		if typed == "" {
 			continue

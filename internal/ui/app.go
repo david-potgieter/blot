@@ -205,6 +205,7 @@ func (a *App) restore(s *session) tea.Cmd {
 		a.jobID++
 		a.jobParams, a.floor, a.cancelled = s.Params, s.Floor, s.Cancelled
 		a.progress, a.scannedAt, a.restored = s.Totals, s.ScannedAt, true
+		a.filter.Min = s.Params.Min                                        // fallback if the saved Min field is invalid
 		a.tree.tree = tree.Rebuild(nil, tree.Filter{}, s.Sort, s.Expanded) // carries sort and expansion into rebuild
 		a.rebuild(true)
 		a.tree.follow(s.Cursor)
@@ -242,8 +243,8 @@ type goneMsg struct {
 	paths []string
 }
 
-// findGone checks the shown results (a snapshot copy, safe to read here) for
-// paths deleted or moved since the scan, skipping anything under a gone dir.
+// findGone checks a snapshot copy (safe to read here) for paths deleted or
+// moved since the scan, skipping anything under a gone dir.
 func findGone(roots []*scan.Node, id int) tea.Cmd {
 	return func() tea.Msg {
 		var gone []string
@@ -286,9 +287,10 @@ func (a *App) cycleFocus(step int) tea.Cmd {
 
 // currentFilter applies the form's min size and type to existing results.
 // A min below the scan floor can't be shown without rescanning, so it is
-// clamped to the floor (and the header asks for a rescan).
+// clamped to the floor (and the header asks for a rescan). An unparseable min
+// keeps the last valid one, never below the floor, so it can't snapshot everything.
 func (a *App) currentFilter() tree.Filter {
-	f := tree.Filter{Min: a.filter.Min, Type: a.form.typ}
+	f := tree.Filter{Min: max(a.filter.Min, a.floor), Type: a.form.typ}
 	if m, err := size.Parse(a.form.min.Value()); err == nil {
 		f.Min = max(m, a.floor)
 	}
@@ -312,6 +314,14 @@ func (a *App) rebuild(fresh bool) {
 		sort, expanded = a.tree.tree.Sort(), a.tree.tree.ExpandedPaths()
 	}
 	a.tree.setTree(tree.Rebuild(a.snapshot, a.filter, sort, expanded))
+}
+
+// refilter applies min/type edits immediately, rebuilding only when they
+// change the filter; most form keys (Folders, moving fields) don't.
+func (a *App) refilter() {
+	if a.job != nil && a.currentFilter() != a.filter {
+		a.rebuild(false)
+	}
 }
 
 // stale reports whether the form asks for something the current scan can't show.
@@ -381,8 +391,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.job == nil {
 			return a, nil
 		}
-		// Whatever went to the Bin is likely in the results too.
-		return a, findGone(a.snapshot, a.jobID)
+		// Whatever went to the Bin is likely in the results too. Check all the
+		// scan kept, not just what the filter shows, or lowering the min later
+		// would bring trashed items back.
+		return a, findGone(a.job.Snapshot(a.floor), a.jobID)
 
 	case goneMsg:
 		if msg.id != a.jobID || len(msg.paths) == 0 {
@@ -452,7 +464,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.form, cmd = a.form.Update(msg)
 			a.form.scanning = a.scanning && !a.stale()
-			a.rebuild(false) // min/type edits re-filter immediately
+			a.refilter()
 			return a, cmd
 		}
 		switch msg.String() {
@@ -475,7 +487,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.form, cmd = a.form.Update(msg)
 	if _, ok := msg.(tea.PasteMsg); ok {
 		a.form.scanning = a.scanning && !a.stale()
-		a.rebuild(false)
+		a.refilter()
 	}
 	return a, cmd
 }
@@ -486,13 +498,38 @@ func (a *App) paneHeight() int { return max(5, a.height-1) }
 // leftHeights splits the left column: the form takes what it needs, the Bin
 // the rest. When the Bin wouldn't fit, the form takes it all and bin is 0.
 func (a *App) leftHeights() (form, bin int) {
-	h := a.paneHeight()
-	fw, _ := a.paneWidths()
-	fh := lipgloss.Height(a.styles.pane.Width(max(fw, formWidth)).Render(a.formBody())) // as wrapped
-	if h-fh < minBinHeight {
-		return h, 0
+	_, form, bin = a.renderLeft()
+	return form, bin
+}
+
+// leftWidth is the left column's outer width whenever it is shown.
+func (a *App) leftWidth() int {
+	if a.width >= narrowWidth {
+		return formWidth
 	}
-	return fh, h - fh
+	return a.width
+}
+
+// renderLeft renders the form pane at the width it is drawn and measures it,
+// so the height matches the wrapping exactly, and View can use the render
+// as is instead of rendering the form a second time.
+func (a *App) renderLeft() (formPane string, form, bin int) {
+	h, w := a.paneHeight(), a.leftWidth()
+	st := a.paneStyle(focusForm).Width(w)
+	body := a.formBody()
+	pane := st.Render(body)
+	if fh := lipgloss.Height(pane); h-fh >= minBinHeight {
+		return pane, fh, h - fh
+	}
+	return st.Height(h).MaxHeight(h).Render(body), h, 0
+}
+
+// paneStyle is the border style for pane f, highlighted when it has focus.
+func (a *App) paneStyle(f focus) lipgloss.Style {
+	if a.focus == f {
+		return a.styles.focusedPane
+	}
+	return a.styles.pane
 }
 
 func (a *App) formBody() string { return a.styles.title.Render("Search") + "\n\n" + a.form.View() }
@@ -512,6 +549,11 @@ func (a *App) paneWidths() (left, results int) {
 // layout sizes sub-models to the panes. Panes have a 1-cell border and
 // 1-cell horizontal padding; results reserve 2 lines for header + gap.
 func (a *App) layout() {
+	if a.width == 0 || a.height == 0 {
+		// No WindowSizeMsg yet (e.g. restoring in New). Sizing now would apply
+		// the restored scroll offset to a 1-row list and lose it.
+		return
+	}
 	fw, rw := a.paneWidths()
 	if fw == 0 {
 		fw = formWidth
@@ -529,16 +571,11 @@ func (a *App) View() tea.View {
 	h := a.paneHeight()
 
 	pane := func(f focus, w, h int) lipgloss.Style {
-		st := a.styles.pane
-		if a.focus == f {
-			st = a.styles.focusedPane
-		}
-		return st.Width(w).Height(h).MaxHeight(h)
+		return a.paneStyle(f).Width(w).Height(h).MaxHeight(h)
 	}
 	var panes []string
 	if fw > 0 {
-		fh, bh := a.leftHeights()
-		left := pane(focusForm, fw, fh).Render(a.formBody())
+		left, _, bh := a.renderLeft()
 		if bh > 0 {
 			left = lipgloss.JoinVertical(lipgloss.Left, left, pane(focusBin, fw, bh).Render(a.bin.view(fw-4, bh-2)))
 		}

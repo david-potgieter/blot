@@ -8,6 +8,22 @@ import (
 	"github.com/david-potgieter/blot/internal/tree"
 )
 
+func TestRootsWithCommas(t *testing.T) {
+	tmp := t.TempDir()
+	odd := filepath.Join(tmp, "Photos, 2024")
+	if err := os.Mkdir(odd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	field := JoinRoots([]string{odd, tmp})
+	got, err := parseRoots(field)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != odd || got[1] != tmp {
+		t.Errorf("parseRoots(%q) = %q", field, got)
+	}
+}
+
 func TestParseRoots(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	tmp := t.TempDir()

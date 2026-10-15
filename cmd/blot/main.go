@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -59,7 +58,7 @@ func main() {
 		session = filepath.Join(cache, "blot", "session.gob.gz")
 	}
 	app, err := ui.New(ui.Config{
-		Roots:    strings.Join(roots, ", "),
+		Roots:    ui.JoinRoots(roots), // escapes commas inside paths
 		Min:      *minSize,
 		Type:     *typ,
 		SkipForm: *noForm,
