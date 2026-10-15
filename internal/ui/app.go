@@ -42,6 +42,7 @@ type App struct {
 	width, height int
 	err           error
 	initCmd       tea.Cmd // from New's showForm/startScan, returned once by Init
+	isDark        bool
 }
 
 // New builds the app. With SkipForm it validates cfg and starts scanning.
@@ -50,7 +51,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, values: &formValues{roots: cfg.Roots, min: cfg.Min, typ: typ}, styles: newStyles(true)}
+	a := &App{cfg: cfg, values: &formValues{roots: cfg.Roots, min: cfg.Min, typ: typ}, styles: newStyles(true), isDark: true}
 	if cfg.SkipForm {
 		p, err := a.values.params()
 		if err != nil {
@@ -68,10 +69,11 @@ func (a *App) Init() tea.Cmd {
 }
 
 func (a *App) showForm() tea.Cmd {
-	a.form = newForm(a.values)
-	if a.width > 0 {
-		a.form = a.form.WithWidth(a.width)
-	}
+	// Theme reads a.isDark at render time, so forms built before or after
+	// background detection both follow it.
+	a.form = newForm(a.values).WithTheme(huh.ThemeFunc(func(bool) *huh.Styles {
+		return huh.ThemeCharm(a.isDark)
+	}))
 	a.state = stateForm
 	return a.form.Init()
 }
@@ -90,9 +92,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 	case tea.BackgroundColorMsg:
-		a.styles = newStyles(msg.IsDark())
+		a.isDark = msg.IsDark()
+		a.styles = newStyles(a.isDark)
 		a.tree.styles = a.styles
 		a.scan.styles = a.styles
+		a.scan.spinner.Style = a.styles.title
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			if a.state == stateScanning {
@@ -130,6 +134,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.id != a.scanID {
 				return a, nil
 			}
+			a.scan.cancel() // release the context
 			if msg.err != nil {
 				if !errors.Is(msg.err, context.Canceled) {
 					a.err = msg.err
