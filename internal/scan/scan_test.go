@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -256,6 +257,88 @@ func TestScanExcludeResolvesSymlinks(t *testing.T) {
 			t.Error("exclude given via symlinked path was not applied")
 		}
 	}
+}
+
+// checkSums asserts every dir is at least as big as its children combined.
+func checkSums(t *testing.T, n *Node) {
+	t.Helper()
+	var sum int64
+	for _, c := range n.Children {
+		sum += c.Size
+		if c.Parent != n {
+			t.Fatalf("%s: wrong parent", c.Path)
+		}
+		checkSums(t, c)
+	}
+	if sum > n.Size {
+		t.Fatalf("%s: size %d < children %d", n.Path, n.Size, sum)
+	}
+}
+
+func TestSnapshotsDuringScanAreConsistent(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	for d := range 40 {
+		for f := range 25 {
+			writeFile(t, filepath.Join(root, fmt.Sprintf("d%02d", d), "sub", fmt.Sprintf("f%02d", f)), 5_000)
+		}
+	}
+	job := Start(context.Background(), []string{root}, Options{})
+	snaps := 0
+	for {
+		select {
+		case <-job.Done():
+			if snaps == 0 {
+				t.Log("scan finished before any mid-scan snapshot")
+			}
+			res, err := job.Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkSums(t, res.Roots[0])
+			if got, want := res.Roots[0].Size, du(t, root); got != want {
+				t.Errorf("final size = %d, want %d", got, want)
+			}
+			return
+		default:
+			for _, r := range job.Snapshot(0) {
+				checkSums(t, r)
+			}
+			snaps++
+		}
+	}
+}
+
+func TestSnapshotPrunesBelowMin(t *testing.T) {
+	root := fixture(t)
+	job := Start(context.Background(), []string{root}, Options{})
+	if _, err := job.Result(); err != nil {
+		t.Fatal(err)
+	}
+	r := job.Snapshot(100_000)[0]
+	if len(r.Children) != 1 || r.Children[0].Name != "a" {
+		t.Fatalf("root children = %v", r.Children)
+	}
+	b := child(t, r.Children[0], "b")
+	child(t, b, "f2")
+	if len(b.Children) != 1 {
+		t.Errorf("b children = %d, want only f2", len(b.Children))
+	}
+	if got := len(job.Snapshot(1 << 40)); got != 1 {
+		t.Errorf("roots always kept: got %d", got)
+	}
+}
+
+func TestCancelledJobKeepsPartialResult(t *testing.T) {
+	root := fixture(t)
+	ctx := &cancelAfter{Context: context.Background(), limit: 4}
+	res, err := Start(ctx, []string{root}, Options{}).Result()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if res == nil || len(res.Roots) != 1 {
+		t.Fatalf("partial result = %+v", res)
+	}
+	checkSums(t, res.Roots[0])
 }
 
 func TestScanSendsProgress(t *testing.T) {
