@@ -243,10 +243,12 @@ type goneMsg struct {
 	paths []string
 }
 
-// findGone checks a snapshot copy (safe to read here) for paths deleted or
-// moved since the scan, skipping anything under a gone dir.
-func findGone(roots []*scan.Node, id int) tea.Cmd {
+// findGone checks everything job kept (down to floor) for paths deleted or
+// moved since the scan, skipping anything under a gone dir. The snapshot is
+// copied inside the command, off the UI thread; Snapshot locks the job itself.
+func findGone(job *scan.Job, floor int64, id int) tea.Cmd {
 	return func() tea.Msg {
+		roots := job.Snapshot(floor)
 		var gone []string
 		var walk func(n *scan.Node)
 		walk = func(n *scan.Node) {
@@ -394,7 +396,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Whatever went to the Bin is likely in the results too. Check all the
 		// scan kept, not just what the filter shows, or lowering the min later
 		// would bring trashed items back.
-		return a, findGone(a.job.Snapshot(a.floor), a.jobID)
+		return a, findGone(a.job, a.floor, a.jobID)
 
 	case goneMsg:
 		if msg.id != a.jobID || len(msg.paths) == 0 {

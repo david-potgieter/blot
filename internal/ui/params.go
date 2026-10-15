@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/david-potgieter/blot/internal/size"
@@ -39,10 +38,10 @@ func (v *formValues) params() (Params, error) {
 	return Params{Roots: roots, Min: minSize, Type: v.typ}, nil
 }
 
-// The Folders field separates paths with commas; a comma inside a path is
-// written as `\,`.
+// The Folders field separates paths with commas. Inside a path a comma is
+// written `\,` and a backslash `\\`, so any path round-trips.
 
-// JoinRoots writes paths as a Folders field value, escaping their commas.
+// JoinRoots writes paths as a Folders field value, escaping as needed.
 func JoinRoots(paths []string) string {
 	out := make([]string, len(paths))
 	for i, p := range paths {
@@ -51,33 +50,55 @@ func JoinRoots(paths []string) string {
 	return strings.Join(out, ", ")
 }
 
-func escapeRoot(p string) string { return strings.ReplaceAll(p, ",", `\,`) }
+var rootEscaper = strings.NewReplacer(`\`, `\\`, ",", `\,`)
 
-func unescapeRoot(p string) string { return strings.ReplaceAll(p, `\,`, ",") }
+func escapeRoot(p string) string { return rootEscaper.Replace(p) }
 
-// lastSeparator is the index of the last unescaped comma in s, or -1.
-func lastSeparator(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ',' && (i == 0 || s[i-1] != '\\') {
-			return i
+// unescapeRoot turns `\\` into `\` and `\,` into `,`; any other backslash is kept.
+func unescapeRoot(p string) string {
+	var b strings.Builder
+	for i := 0; i < len(p); i++ {
+		if p[i] == '\\' && i+1 < len(p) && (p[i+1] == '\\' || p[i+1] == ',') {
+			i++
 		}
+		b.WriteByte(p[i])
 	}
-	return -1
+	return b.String()
 }
 
-// splitRoots splits a Folders field value on unescaped commas and unescapes each path.
+// separators returns the indexes of the commas that separate paths, i.e. those
+// not escaped by a backslash (which itself may be escaped).
+func separators(s string) []int {
+	var out []int
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++ // the next byte is escaped
+		case ',':
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// lastSeparator is the index of the last separating comma in s, or -1.
+func lastSeparator(s string) int {
+	seps := separators(s)
+	if len(seps) == 0 {
+		return -1
+	}
+	return seps[len(seps)-1]
+}
+
+// splitRoots splits a Folders field value into paths and unescapes each.
 func splitRoots(s string) []string {
 	var out []string
-	for {
-		i := lastSeparator(s)
-		out = append(out, unescapeRoot(s[i+1:]))
-		if i < 0 {
-			break
-		}
-		s = s[:i]
+	start := 0
+	for _, i := range separators(s) {
+		out = append(out, unescapeRoot(s[start:i]))
+		start = i + 1
 	}
-	slices.Reverse(out)
-	return out
+	return append(out, unescapeRoot(s[start:]))
 }
 
 // parseRoots splits comma-separated paths, expands ~/, makes them absolute,

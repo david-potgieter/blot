@@ -43,6 +43,9 @@ Search pane (top left):
 | `esc` | go to results |
 | `ctrl+c` | quit |
 
+*Folders* takes several paths separated by commas. For a comma inside a folder name type `\,`
+(and `\\` for a backslash); completion and paths given on the command line do this for you.
+
 Results pane (right):
 
 | key | action |

@@ -3,6 +3,8 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/david-potgieter/blot/internal/tree"
@@ -21,6 +23,23 @@ func TestRootsWithCommas(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != odd || got[1] != tmp {
 		t.Errorf("parseRoots(%q) = %q", field, got)
+	}
+}
+
+func TestJoinSplitRootsRoundTrip(t *testing.T) {
+	for _, paths := range [][]string{
+		{`foo\`, "bar"},       // trailing backslash must not escape the separator
+		{`a\,b`},              // a literal \, stays as is
+		{"Photos, 2024", "x"}, // comma inside a path
+		{`a\\b`, `c\`},
+	} {
+		got := splitRoots(JoinRoots(paths))
+		for i := range got {
+			got[i] = strings.TrimSpace(got[i]) // parseRoots trims around separators
+		}
+		if !slices.Equal(got, paths) {
+			t.Errorf("round trip %q via %q = %q", paths, JoinRoots(paths), got)
+		}
 	}
 }
 
