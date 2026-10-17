@@ -444,6 +444,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.startScan()
 
+	case deleteQueryMsg:
+		a.dialog = a.deleteQueryDialog(msg.label)
+		return a, nil
+
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return a, a.quit()

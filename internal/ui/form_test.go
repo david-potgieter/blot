@@ -373,6 +373,69 @@ func TestTweakingRecalledQueryLeavesItSaved(t *testing.T) {
 	}
 }
 
+// pressOnSaved moves from Folders to the first Saved row and presses k,
+// delivering what that sends to the app.
+func pressOnSaved(a *App, k tea.KeyPressMsg) {
+	for range 5 {
+		a.Update(keyDown) // roots → first saved row
+	}
+	if _, cmd := a.Update(k); cmd != nil {
+		a.Update(cmd())
+	}
+}
+
+func TestDeleteSavedQueryAfterConfirming(t *testing.T) {
+	path := savedQueries(t, "a", "b")
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: path})
+	pressOnSaved(a, press("d"))
+	if a.dialog == nil || !strings.Contains(a.View().Content, "Delete 'a'?") {
+		t.Fatalf("d should ask to delete a:\n%s", a.View().Content)
+	}
+	a.Update(keyLeft) // yes
+	a.Update(keyEnter)
+	if got, _ := (queries.Store{Path: path}).List(); !slices.Equal(got, []string{"b"}) {
+		t.Errorf("file holds %q, want [b]", got)
+	}
+	if a.dialog != nil || a.focus != focusForm || a.form.savedSelection() != "b" {
+		t.Errorf("dialog=%v focus=%d selected=%q, want back on the Saved list at b", a.dialog != nil, a.focus, a.form.savedSelection())
+	}
+	if out := a.form.View(); strings.Contains(out, "  a\n") || strings.HasSuffix(out, "  a") {
+		t.Errorf("a still listed:\n%s", out)
+	}
+}
+
+func TestDeleteSavedQueryNoKeepsIt(t *testing.T) {
+	path := savedQueries(t, "a")
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: path})
+	pressOnSaved(a, press("d"))
+	a.Update(keyEnter) // no
+	if got, _ := (queries.Store{Path: path}).List(); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("file holds %q, want [a]", got)
+	}
+	if a.dialog != nil || a.form.savedSelection() != "a" {
+		t.Errorf("dialog=%v selected=%q, want closed and still on a", a.dialog != nil, a.form.savedSelection())
+	}
+}
+
+func TestDeleteLastSavedQueryFocusesButton(t *testing.T) {
+	for _, k := range []tea.KeyPressMsg{{Code: tea.KeyDelete}, {Code: tea.KeyBackspace}} {
+		path := savedQueries(t, "only")
+		a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: path})
+		pressOnSaved(a, k)
+		if a.dialog == nil {
+			t.Fatalf("%s should ask to delete", k)
+		}
+		a.Update(keyLeft) // yes
+		a.Update(keyEnter)
+		if got, _ := (queries.Store{Path: path}).List(); len(got) != 0 {
+			t.Errorf("%s: file holds %q, want none", k, got)
+		}
+		if a.focus != focusForm || a.form.focus != fieldButton {
+			t.Errorf("%s: focus = %d/%d, want the Search button", k, a.focus, a.form.focus)
+		}
+	}
+}
+
 func TestSavedListHiddenWhenNoQueries(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "queries.json")
 	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: missing})
