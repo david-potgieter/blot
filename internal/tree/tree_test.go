@@ -206,6 +206,71 @@ func TestNameFilterShowsMatchesUnderContextDirs(t *testing.T) {
 	}
 }
 
+// root
+//
+//	a(context)
+//	  nm(match)
+//	    nm(nested match)
+//	      x
+//	  b(context)
+//	    nm(match)
+//	      y
+//	  src
+func named() *scan.Node {
+	var setPaths func(n *scan.Node, parent string)
+	setPaths = func(n *scan.Node, parent string) {
+		n.Path = parent + "/" + n.Name
+		for _, c := range n.Children {
+			setPaths(c, n.Path)
+		}
+	}
+	root := dir("root", 100,
+		dir("a", 90,
+			dir("nm", 50, dir("nm", 40, file("x", 40)), file("z", 10)),
+			dir("b", 30, dir("nm", 30, file("y", 30))),
+			dir("src", 10, file("s", 10)),
+		),
+	)
+	setPaths(root, "")
+	return root
+}
+
+func TestNameSetStartsContextExpandedAndMatchesCollapsed(t *testing.T) {
+	tr := New([]*scan.Node{named()}, Filter{NamePatterns: []string{"nm"}})
+	eq(t, names(tr.Rows()), []string{"root", "a", "nm", "b", "nm"})
+}
+
+func TestNameSetOpeningOuterMatchShowsNestedMatchCollapsed(t *testing.T) {
+	tr := New([]*scan.Node{named()}, Filter{NamePatterns: []string{"nm"}})
+	tr.Expand(tr.Rows()[2].Node) // a/nm
+	eq(t, names(tr.Rows()), []string{"root", "a", "nm", "nm", "b", "nm"})
+}
+
+func TestNameSetRebuildKeepsToggles(t *testing.T) {
+	f := Filter{NamePatterns: []string{"nm"}}
+	tr := New([]*scan.Node{named()}, f)
+	rows := tr.Rows()
+	tr.Expand(rows[2].Node)   // a/nm
+	tr.Collapse(rows[3].Node) // a/b
+	tr2 := Rebuild([]*scan.Node{named()}, f, tr.Sort(), tr.ExpandedPaths())
+	eq(t, names(tr2.Rows()), []string{"root", "a", "nm", "nm", "b"})
+}
+
+func TestNameClearedOnlyRootsStartExpanded(t *testing.T) {
+	tr := New([]*scan.Node{named()}, Filter{NamePatterns: []string{"nm"}})
+	tr2 := Rebuild([]*scan.Node{named()}, Filter{}, tr.Sort(), tr.ExpandedPaths())
+	eq(t, names(tr2.Rows()), []string{"root", "a"})
+}
+
+func TestNameSetMarksOnlyNonMatchingDirsAsContext(t *testing.T) {
+	tr := New([]*scan.Node{named()}, Filter{NamePatterns: []string{"nm"}})
+	for _, r := range tr.Rows() {
+		if want := r.Node.Name != "nm"; r.Context != want {
+			t.Errorf("%s context = %v, want %v", r.Node.Path, r.Context, want)
+		}
+	}
+}
+
 func TestParseType(t *testing.T) {
 	for s, want := range map[string]Type{"all": All, "dirs": Dirs, "files": Files, "DIRS": Dirs} {
 		got, err := ParseType(s)
