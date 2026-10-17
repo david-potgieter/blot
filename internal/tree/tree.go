@@ -4,6 +4,7 @@ package tree
 import (
 	"cmp"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -42,11 +43,19 @@ func ParseType(s string) (Type, error) {
 type Filter struct {
 	Min  int64
 	Type Type
+	// NamePatterns are lowercase globs (filepath.Match) for a node's own name;
+	// any may match. None matches every name.
+	NamePatterns []string
 }
 
-// Matches reports whether n satisfies the size and type constraints.
+// Equal reports whether f and g select the same nodes.
+func (f Filter) Equal(g Filter) bool {
+	return f.Min == g.Min && f.Type == g.Type && slices.Equal(f.NamePatterns, g.NamePatterns)
+}
+
+// Matches reports whether n satisfies the size, type and name constraints.
 func (f Filter) Matches(n *scan.Node) bool {
-	if n.Size < f.Min {
+	if n.Size < f.Min || !f.matchesName(n.Name) {
 		return false
 	}
 	switch f.Type {
@@ -56,6 +65,19 @@ func (f Filter) Matches(n *scan.Node) bool {
 		return !n.IsDir
 	}
 	return true
+}
+
+func (f Filter) matchesName(name string) bool {
+	if len(f.NamePatterns) == 0 {
+		return true
+	}
+	name = strings.ToLower(name)
+	for _, p := range f.NamePatterns {
+		if ok, _ := filepath.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // SortBy orders siblings.

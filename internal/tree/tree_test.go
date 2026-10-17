@@ -172,6 +172,40 @@ func TestSortSizeDesc(t *testing.T) {
 	eq(t, names(tr.Rows()), []string{"r", "a", "b"})
 }
 
+func TestNamePatternsMatchOwnNameAsGlob(t *testing.T) {
+	inPath := &scan.Node{Name: "x", Path: "/node_modules/x"}
+	for _, c := range []struct {
+		name     string
+		patterns []string
+		want     bool
+	}{
+		{"node_modules", []string{"node_modules"}, true},
+		{"node_modules", []string{"modules"}, false}, // no substring matching
+		{"node_scripts", []string{"node_*"}, true},
+		{"Node_Modules", []string{"node_modules"}, true}, // case-insensitive
+		{".next", []string{"node_modules", ".next"}, true},
+		{"src", []string{"node_modules", ".next"}, false},
+		{"anything", nil, true},
+	} {
+		n := &scan.Node{Name: c.name, Path: "/" + c.name}
+		if got := (Filter{NamePatterns: c.patterns}).Matches(n); got != c.want {
+			t.Errorf("%q with %q = %v, want %v", c.name, c.patterns, got, c.want)
+		}
+	}
+	if (Filter{NamePatterns: []string{"node_modules"}}).Matches(inPath) {
+		t.Error("matched on the path, not the name")
+	}
+}
+
+func TestNameFilterShowsMatchesUnderContextDirs(t *testing.T) {
+	tr := New([]*scan.Node{sample()}, Filter{Min: 280, NamePatterns: []string{"nm"}})
+	expandAll(tr)
+	eq(t, names(tr.Rows()), []string{"root", "big", "nm"})
+	if tr.MatchCount() != 1 {
+		t.Errorf("matches = %d, want 1", tr.MatchCount())
+	}
+}
+
 func TestParseType(t *testing.T) {
 	for s, want := range map[string]Type{"all": All, "dirs": Dirs, "files": Files, "DIRS": Dirs} {
 		got, err := ParseType(s)

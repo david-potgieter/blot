@@ -40,7 +40,7 @@ func newTestForm() formModel {
 
 func TestFormFieldNavigationWraps(t *testing.T) {
 	f := newTestForm()
-	f, _ = formKeys(f, keyDown, keyDown, keyDown)
+	f, _ = formKeys(f, keyDown, keyDown, keyDown, keyDown)
 	if f.focus != fieldButton {
 		t.Fatalf("focus = %d, want button", f.focus)
 	}
@@ -65,9 +65,32 @@ func TestFormTyping(t *testing.T) {
 	}
 }
 
+func TestFormNameField(t *testing.T) {
+	f := newTestForm()
+	out := f.View()
+	if i, j, k := strings.Index(out, "Min size"), strings.Index(out, "Name"), strings.Index(out, "Show"); !(i < j && j < k) {
+		t.Errorf("Name not between Min size and Show:\n%s", out)
+	}
+	if got := f.name.Placeholder; got != "node_modules, .next" {
+		t.Errorf("placeholder = %q", got)
+	}
+	f, _ = formKeys(f, keyDown, keyDown)
+	if !f.name.Focused() {
+		t.Fatalf("focus = %d, want name after min", f.focus)
+	}
+	f, _ = formKeys(f, press("n"), press("m"))
+	if got := f.values(); got.name != "nm" || got.min != "100MB" {
+		t.Errorf("values = %+v", got)
+	}
+	f, _ = formKeys(f, keyUp)
+	if !f.min.Focused() {
+		t.Errorf("up from name: focus = %d, want min", f.focus)
+	}
+}
+
 func TestFormTypeSelector(t *testing.T) {
 	f := newTestForm()
-	f, _ = formKeys(f, keyDown, keyDown, keyRight)
+	f, _ = formKeys(f, keyDown, keyDown, keyDown, keyRight)
 	if f.typ != tree.Dirs {
 		t.Fatalf("typ = %v", f.typ)
 	}
@@ -234,5 +257,9 @@ func TestFormButtonLabelAndErrors(t *testing.T) {
 	f.min.SetValue("lots")
 	if out := f.View(); !strings.Contains(out, "try 500MB") {
 		t.Errorf("missing size error:\n%s", out)
+	}
+	f.name.SetValue("[abc")
+	if out := f.View(); !strings.Contains(out, "[abc: invalid pattern") {
+		t.Errorf("missing name error:\n%s", out)
 	}
 }

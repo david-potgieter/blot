@@ -20,6 +20,7 @@ type field int
 const (
 	fieldRoots field = iota
 	fieldMin
+	fieldName
 	fieldType
 	fieldButton
 	numFields
@@ -32,14 +33,14 @@ type submitMsg struct{}
 
 // formModel is the search form in the left pane.
 type formModel struct {
-	roots, min textinput.Model
-	typ        tree.Type
-	focus      field
-	focused    bool // pane has keyboard focus
-	scanning   bool // button shows Cancel
-	styles     styles
-	cache      *rootsCache // shared across copies; parseRoots stats the disk
-	listed     *dirList    // shared across copies; suggestions read the disk
+	roots, min, name textinput.Model
+	typ              tree.Type
+	focus            field
+	focused          bool // pane has keyboard focus
+	scanning         bool // button shows Cancel
+	styles           styles
+	cache            *rootsCache // shared across copies; parseRoots stats the disk
+	listed           *dirList    // shared across copies; suggestions read the disk
 }
 
 type rootsCache struct {
@@ -79,6 +80,7 @@ func newFormModel(v formValues, st styles) formModel {
 	f := formModel{
 		roots:  roots,
 		min:    input(v.min, "500MB"),
+		name:   input(v.name, "node_modules, .next"),
 		typ:    v.typ,
 		styles: st,
 		cache:  &rootsCache{},
@@ -187,7 +189,7 @@ func (f formModel) canComplete() bool {
 }
 
 func (f formModel) values() formValues {
-	return formValues{roots: f.roots.Value(), min: f.min.Value(), typ: f.typ}
+	return formValues{roots: f.roots.Value(), min: f.min.Value(), name: f.name.Value(), typ: f.typ}
 }
 
 // setWidth fits the form into w cells. Inputs are indented 2 and textinput
@@ -195,6 +197,7 @@ func (f formModel) values() formValues {
 func (f *formModel) setWidth(w int) {
 	f.roots.SetWidth(max(1, w-3))
 	f.min.SetWidth(max(1, w-3))
+	f.name.SetWidth(max(1, w-3))
 }
 
 // setFocused gives or takes keyboard focus for the whole pane.
@@ -207,6 +210,7 @@ func (f *formModel) setFocused(on bool) tea.Cmd {
 func (f *formModel) syncFocus() tea.Cmd {
 	f.roots.Blur()
 	f.min.Blur()
+	f.name.Blur()
 	if !f.focused {
 		return nil
 	}
@@ -215,6 +219,8 @@ func (f *formModel) syncFocus() tea.Cmd {
 		return f.roots.Focus()
 	case fieldMin:
 		return f.min.Focus()
+	case fieldName:
+		return f.name.Focus()
 	}
 	return nil
 }
@@ -222,14 +228,15 @@ func (f *formModel) syncFocus() tea.Cmd {
 func (f formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
-		var c1, c2 tea.Cmd
+		var c1, c2, c3 tea.Cmd
 		before := f.roots.Value()
 		f.roots, c1 = f.roots.Update(msg)
 		f.min, c2 = f.min.Update(msg)
+		f.name, c3 = f.name.Update(msg)
 		if f.roots.Value() != before { // pasted
 			f.suggest()
 		}
-		return f, tea.Batch(c1, c2)
+		return f, tea.Batch(c1, c2, c3)
 	}
 	switch k.String() {
 	case "down":
@@ -258,6 +265,8 @@ func (f formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 		}
 	case fieldMin:
 		f.min, cmd = f.min.Update(msg)
+	case fieldName:
+		f.name, cmd = f.name.Update(msg)
 	case fieldType:
 		switch k.String() {
 		case "left":
@@ -287,6 +296,11 @@ func (f formModel) View() string {
 	b.WriteString("\n" + label(fieldMin, "Min size") + "\n  " + f.min.View() + "\n")
 	if _, err := size.Parse(f.min.Value()); err != nil {
 		b.WriteString("  " + s.err.Render("try 500MB or 1GiB") + "\n")
+	}
+
+	b.WriteString("\n" + label(fieldName, "Name") + "\n  " + f.name.View() + "\n")
+	if _, err := parseNamePatterns(f.name.Value()); err != nil {
+		b.WriteString("  " + s.err.Render(err.Error()) + "\n")
 	}
 
 	b.WriteString("\n" + label(fieldType, "Show") + "\n  ‹ " + typeLabels[f.typ] + " ›\n\n")

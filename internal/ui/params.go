@@ -14,15 +14,17 @@ import (
 
 // Params is a validated search.
 type Params struct {
-	Roots []string
-	Min   int64
-	Type  tree.Type
+	Roots        []string
+	Min          int64
+	Type         tree.Type
+	NamePatterns []string
 }
 
 // formValues is the raw form input.
 type formValues struct {
 	roots string
 	min   string
+	name  string
 	typ   tree.Type
 }
 
@@ -35,7 +37,11 @@ func (v *formValues) params() (Params, error) {
 	if err != nil {
 		return Params{}, err
 	}
-	return Params{Roots: roots, Min: minSize, Type: v.typ}, nil
+	patterns, err := parseNamePatterns(v.name)
+	if err != nil {
+		return Params{}, err
+	}
+	return Params{Roots: roots, Min: minSize, Type: v.typ, NamePatterns: patterns}, nil
 }
 
 // The Folders field separates paths with commas. Inside a path a comma is
@@ -135,6 +141,24 @@ func parseRoots(s string) ([]string, error) {
 	}
 	if len(out) == 0 {
 		return nil, errors.New("enter at least one path")
+	}
+	return out, nil
+}
+
+// parseNamePatterns splits the Name field into lowercase globs, escaped like
+// Folders, and checks each is a valid pattern. Errors name the pattern as typed.
+func parseNamePatterns(s string) ([]string, error) {
+	out := []string{}
+	for _, typed := range splitRoots(s) {
+		typed = strings.TrimSpace(typed)
+		if typed == "" {
+			continue
+		}
+		p := strings.ToLower(typed)
+		if _, err := filepath.Match(p, ""); err != nil {
+			return nil, fmt.Errorf("%s: invalid pattern", typed)
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }

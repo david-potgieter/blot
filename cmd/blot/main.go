@@ -19,6 +19,7 @@ var version = "dev" // set by goreleaser
 func main() {
 	minSize := flag.String("min", "100MB", "minimum size, e.g. 500MB, 1GiB")
 	typ := flag.String("type", "all", "what to show: all, dirs, files")
+	name := flag.String("name", "", "only names matching these comma-separated globs, e.g. node_modules,.next")
 	noForm := flag.Bool("no-form", false, "skip the form and scan immediately")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Usage = func() {
@@ -61,6 +62,7 @@ func main() {
 		Roots:    ui.JoinRoots(roots), // escapes commas inside paths
 		Min:      *minSize,
 		Type:     *typ,
+		Name:     *name,
 		SkipForm: *noForm,
 		Excludes: scan.DefaultExcludes(home),
 		Session:  session,

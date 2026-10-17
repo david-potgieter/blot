@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -94,6 +95,55 @@ func TestSubmitScansAndFocusesResults(t *testing.T) {
 	}
 }
 
+func TestNameFlagFiltersScan(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", Name: "MID", SkipForm: true})
+	finish(t, a)
+	if got := a.tree.tree.MatchCount(); got != 1 {
+		t.Errorf("matches = %d, want 1 (mid)", got)
+	}
+	if got := strings.Join(names(a), ","); got != dir+",mid" {
+		t.Errorf("rows = %s", got)
+	}
+	if a.form.min.Value() != "1MB" {
+		t.Errorf("min changed to %q", a.form.min.Value())
+	}
+}
+
+func TestTypingNameFiltersResults(t *testing.T) {
+	dir := fixtureDir(t)
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true})
+	finish(t, a)
+	id := a.jobID
+	a.Update(keyTab)  // results → form (roots field)
+	a.Update(keyDown) // min
+	a.Update(keyDown) // name
+	for _, r := range "b*" {
+		a.Update(press(string(r)))
+	}
+	if got := strings.Join(names(a), ","); got != dir+",big" || a.jobID != id {
+		t.Errorf("rows after name b* = %s (job %d → %d)", got, id, a.jobID)
+	}
+	a.Update(submitMsg{})
+	if !slices.Equal(a.jobParams.NamePatterns, []string{"b*"}) {
+		t.Errorf("search params = %+v", a.jobParams)
+	}
+}
+
+func TestInvalidNameBlocksSearch(t *testing.T) {
+	a := newApp(t, Config{Roots: fixtureDir(t), Min: "1MB", Type: "all", Name: "[abc"})
+	a.Update(submitMsg{})
+	if a.job != nil || a.focus != focusForm {
+		t.Error("search started with an invalid name")
+	}
+	if !strings.Contains(a.View().Content, "invalid pattern") {
+		t.Error("missing inline name error")
+	}
+	if _, err := New(Config{Roots: "~", Min: "1MB", Type: "all", Name: "[abc", SkipForm: true}); err == nil {
+		t.Error("expected error for invalid -name with -no-form")
+	}
+}
+
 func TestFilterEditsApplyWithoutRescan(t *testing.T) {
 	dir := fixtureDir(t)
 	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", SkipForm: true})
@@ -115,6 +165,7 @@ func TestFilterEditsApplyWithoutRescan(t *testing.T) {
 		t.Errorf("rows after min 2MB = %s", got)
 	}
 
+	a.Update(keyDown)  // name field
 	a.Update(keyDown)  // type field
 	a.Update(keyRight) // dirs only
 	if a.filter.Type != tree.Dirs {

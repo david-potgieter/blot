@@ -45,6 +45,7 @@ type Config struct {
 	Roots    string // comma-separated
 	Min      string // e.g. "500MB"
 	Type     string // all | dirs | files
+	Name     string // comma-separated name globs, e.g. "node_modules, .next"
 	SkipForm bool   // start scanning immediately
 	Excludes []string
 	Bin      string // Trash folder; defaults to ~/.Trash
@@ -97,7 +98,7 @@ func New(cfg Config) (*App, error) {
 	st := newStyles(true)
 	a := &App{
 		cfg:    cfg,
-		form:   newFormModel(formValues{roots: cfg.Roots, min: cfg.Min, typ: typ}, st),
+		form:   newFormModel(formValues{roots: cfg.Roots, min: cfg.Min, name: cfg.Name, typ: typ}, st),
 		bin:    newBinModel(st),
 		tree:   newTreeModel(st),
 		help:   help.New(),
@@ -287,14 +288,18 @@ func (a *App) cycleFocus(step int) tea.Cmd {
 	return a.setFocus(ps[((i+step)%len(ps)+len(ps))%len(ps)])
 }
 
-// currentFilter applies the form's min size and type to existing results.
+// currentFilter applies the form's min size, name and type to existing results.
 // A min below the scan floor can't be shown without rescanning, so it is
 // clamped to the floor (and the header asks for a rescan). An unparseable min
 // keeps the last valid one, never below the floor, so it can't snapshot everything.
+// An invalid name likewise keeps the last valid patterns.
 func (a *App) currentFilter() tree.Filter {
-	f := tree.Filter{Min: max(a.filter.Min, a.floor), Type: a.form.typ}
+	f := tree.Filter{Min: max(a.filter.Min, a.floor), Type: a.form.typ, NamePatterns: a.filter.NamePatterns}
 	if m, err := size.Parse(a.form.min.Value()); err == nil {
 		f.Min = max(m, a.floor)
+	}
+	if p, err := parseNamePatterns(a.form.name.Value()); err == nil {
+		f.NamePatterns = p
 	}
 	return f
 }
@@ -321,7 +326,7 @@ func (a *App) rebuild(fresh bool) {
 // refilter applies min/type edits immediately, rebuilding only when they
 // change the filter; most form keys (Folders, moving fields) don't.
 func (a *App) refilter() {
-	if a.job != nil && a.currentFilter() != a.filter {
+	if a.job != nil && !a.currentFilter().Equal(a.filter) {
 		a.rebuild(false)
 	}
 }
@@ -355,6 +360,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.form.styles, a.bin.styles, a.tree.styles = a.styles, a.styles, a.styles
 		a.form.roots.SetStyles(textinput.DefaultStyles(a.isDark))
 		a.form.min.SetStyles(textinput.DefaultStyles(a.isDark))
+		a.form.name.SetStyles(textinput.DefaultStyles(a.isDark))
 		return a, nil
 
 	case tickMsg:
