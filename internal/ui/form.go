@@ -73,6 +73,21 @@ func (f *formModel) loadSaved() {
 	}
 }
 
+// saveQuery stores the form's values under label and reloads the list.
+func (f *formModel) saveQuery(label string) error {
+	v := f.values()
+	err := f.store.Save(label, queries.Query{Roots: v.roots, Min: v.min, Show: v.typ.String(), Name: v.name})
+	f.loadSaved()
+	return err
+}
+
+// deleteSaved removes the query saved under label and reloads the list.
+func (f *formModel) deleteSaved(label string) error {
+	err := f.store.Delete(label)
+	f.loadSaved()
+	return err
+}
+
 type rootsCache struct {
 	val   string
 	roots []string

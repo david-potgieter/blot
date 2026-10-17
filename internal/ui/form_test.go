@@ -297,6 +297,22 @@ func TestSavedListNavigation(t *testing.T) {
 	}
 }
 
+func TestSavedListReloadsAfterSaveAndDelete(t *testing.T) {
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: savedQueries(t, "a")})
+	if err := a.form.saveQuery("b"); err != nil {
+		t.Fatal(err)
+	}
+	if out := a.form.View(); !strings.Contains(out, "  b") {
+		t.Errorf("saved query not listed:\n%s", out)
+	}
+	if err := a.form.deleteSaved("a"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(a.form.saved, []string{"b"}) {
+		t.Errorf("after delete: saved = %q, want [b]", a.form.saved)
+	}
+}
+
 func TestSavedListHiddenWhenNoQueries(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "queries.json")
 	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: missing})
