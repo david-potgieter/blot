@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/david-potgieter/blot/internal/queries"
 	"github.com/david-potgieter/blot/internal/size"
 	"github.com/david-potgieter/blot/internal/tree"
 )
@@ -23,6 +24,7 @@ const (
 	fieldName
 	fieldType
 	fieldButton
+	fieldSaved // a row of the Saved list; skipped while it's empty
 	numFields
 )
 
@@ -41,6 +43,49 @@ type formModel struct {
 	styles           styles
 	cache            *rootsCache // shared across copies; parseRoots stats the disk
 	listed           *dirList    // shared across copies; suggestions read the disk
+	store            queries.Store
+	saved            []string // saved query labels, listed below the button
+	savedRow         int      // the row focused while focus is fieldSaved
+	savedErr         error    // the queries file couldn't be read
+}
+
+// savedSelection is the label of the focused Saved row, or "".
+func (f formModel) savedSelection() string {
+	if f.focus != fieldSaved || f.savedRow >= len(f.saved) {
+		return ""
+	}
+	return f.saved[f.savedRow]
+}
+
+// loadSaved re-reads the saved query labels. A corrupt file leaves the list
+// empty and is reported, never rewritten.
+func (f *formModel) loadSaved() {
+	f.saved, f.savedErr = nil, nil
+	if f.store.Path == "" {
+		return
+	}
+	f.saved, f.savedErr = f.store.List()
+	if f.focus == fieldSaved {
+		if len(f.saved) == 0 {
+			f.focus = fieldButton
+		}
+		f.savedRow = min(f.savedRow, max(0, len(f.saved)-1))
+	}
+}
+
+// saveQuery stores the form's values under label and reloads the list.
+func (f *formModel) saveQuery(label string) error {
+	v := f.values()
+	err := f.store.Save(label, queries.Query{Roots: v.roots, Min: v.min, Show: v.typ.String(), Name: v.name})
+	f.loadSaved()
+	return err
+}
+
+// deleteSaved removes the query saved under label and reloads the list.
+func (f *formModel) deleteSaved(label string) error {
+	err := f.store.Delete(label)
+	f.loadSaved()
+	return err
 }
 
 type rootsCache struct {
@@ -240,10 +285,28 @@ func (f formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 	}
 	switch k.String() {
 	case "down":
+		if f.focus == fieldSaved && f.savedRow < len(f.saved)-1 {
+			f.savedRow++
+			return f, nil
+		}
 		f.focus = (f.focus + 1) % numFields
+		if f.focus == fieldSaved && len(f.saved) == 0 {
+			f.focus = fieldRoots
+		}
+		f.savedRow = 0
 		return f, f.syncFocus()
 	case "up":
+		if f.focus == fieldSaved && f.savedRow > 0 {
+			f.savedRow--
+			return f, nil
+		}
 		f.focus = (f.focus + numFields - 1) % numFields
+		if f.focus == fieldSaved {
+			if len(f.saved) == 0 {
+				f.focus = fieldButton
+			}
+			f.savedRow = max(0, len(f.saved)-1)
+		}
 		return f, f.syncFocus()
 	case "enter":
 		return f, func() tea.Msg { return submitMsg{} }
@@ -315,5 +378,18 @@ func (f formModel) View() string {
 		btn = s.title.Render(btn)
 	}
 	b.WriteString("  " + btn)
+
+	if f.savedErr != nil {
+		b.WriteString("\n\n  " + s.err.Render(f.savedErr.Error()))
+	}
+	if len(f.saved) > 0 {
+		b.WriteString("\n\n" + label(fieldSaved, "Saved"))
+		for i, l := range f.saved {
+			if f.focused && f.focus == fieldSaved && f.savedRow == i {
+				l = s.selected.Render(l)
+			}
+			b.WriteString("\n  " + l)
+		}
+	}
 	return b.String()
 }
