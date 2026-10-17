@@ -82,6 +82,26 @@ func TestParseRootsNormalizes(t *testing.T) {
 	}
 }
 
+func TestParseNamePatterns(t *testing.T) {
+	for in, want := range map[string][]string{
+		"":                    {},
+		" , ":                 {},
+		"node_modules":        {"node_modules"},
+		"node_modules, .next": {"node_modules", ".next"},
+		" Node_*  ,  .NEXT ":  {"node_*", ".next"},
+		`My\,Folder`:          {"my,folder"},
+		`My\,Folder, build`:   {"my,folder", "build"},
+	} {
+		got, err := parseNamePatterns(in)
+		if err != nil || !slices.Equal(got, want) || got == nil {
+			t.Errorf("parseNamePatterns(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := parseNamePatterns("node_modules, [abc"); err == nil {
+		t.Error("expected error for unclosed [")
+	}
+}
+
 func TestTildify(t *testing.T) {
 	cases := map[string]string{"/Users/a": "~", "/Users/a/x": "~/x", "/Users/ab": "/Users/ab", "/tmp": "/tmp"}
 	for in, want := range cases {
@@ -104,5 +124,20 @@ func TestFormValuesParams(t *testing.T) {
 	v.min = "lots"
 	if _, err := v.params(); err == nil {
 		t.Error("expected size error")
+	}
+}
+
+func TestFormValuesParamsName(t *testing.T) {
+	v := &formValues{roots: t.TempDir(), min: "1MB", name: "Node_Modules, .next"}
+	p, err := v.params()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"node_modules", ".next"}; !slices.Equal(p.NamePatterns, want) || p.Min != 1_000_000 {
+		t.Errorf("params = %+v, want patterns %q and min unchanged", p, want)
+	}
+	v.name = "[abc"
+	if _, err := v.params(); err == nil {
+		t.Error("expected pattern error")
 	}
 }
