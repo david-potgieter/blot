@@ -437,6 +437,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, a.startScan()
 
+	case recallQueryMsg:
+		if err := a.form.recall(msg.label); err != nil {
+			a.form.savedErr = err // shown below the button
+			return a, nil
+		}
+		return a, a.startScan()
+
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return a, a.quit()
