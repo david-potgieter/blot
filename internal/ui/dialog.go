@@ -3,22 +3,40 @@ package ui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
 const dialogWidth = 56 // including border and padding
 
-// dialog is a modal choice between buttons. It takes all keys while open.
+// dialog is a modal choice between buttons, or a text prompt when input is
+// set. It takes all keys while open.
 type dialog struct {
 	title, body string
 	options     []string
 	choice      int
 	onPick      func(choice int) tea.Cmd
+	input       *textinput.Model          // prompt: enter submits it, esc cancels
+	onSubmit    func(text string) tea.Cmd // called with the trimmed input, never ""
 }
 
 // update handles a key; done reports that the dialog should close.
 func (d *dialog) update(msg tea.KeyPressMsg) (cmd tea.Cmd, done bool) {
+	if d.input != nil {
+		switch msg.String() {
+		case "esc":
+			return nil, true
+		case "enter":
+			text := strings.TrimSpace(d.input.Value())
+			if text == "" {
+				return nil, false
+			}
+			return d.onSubmit(text), true
+		}
+		*d.input, cmd = d.input.Update(msg)
+		return cmd, false
+	}
 	switch msg.String() {
 	case "left", "h", "shift+tab":
 		d.choice = (d.choice + len(d.options) - 1) % len(d.options)
@@ -35,6 +53,10 @@ func (d *dialog) update(msg tea.KeyPressMsg) (cmd tea.Cmd, done bool) {
 // view renders the dialog at most w cells wide. Body lines are cut to fit.
 func (d *dialog) view(st styles, w int) string {
 	w = min(dialogWidth, w)
+	if d.input != nil {
+		d.input.SetWidth(max(1, w-5)) // textinput renders one cell wider, for the cursor
+		return st.focusedPane.Width(w).Render(st.title.Render(d.title) + "\n\n" + d.input.View())
+	}
 	lines := strings.Split(d.body, "\n")
 	for i, l := range lines {
 		lines[i] = lipgloss.NewStyle().MaxWidth(max(1, w-4)).Render(l)

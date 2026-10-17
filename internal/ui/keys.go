@@ -28,12 +28,17 @@ func (k treeKeys) ShortHelp() []key.Binding {
 	return []key.Binding{k.Up, k.Down, k.Expand, k.Collapse, k.Sort, k.Reveal, k.Rescan, k.Search, k.Quit}
 }
 
-// dialogHelp is the help line while a dialog is open.
-func dialogHelp() []key.Binding {
+// dialogHelp is the help line while a dialog is open; a prompt has no buttons.
+func dialogHelp(prompt bool) []key.Binding {
+	confirm := key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm"))
+	cancel := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel"))
+	if prompt {
+		return []key.Binding{confirm, cancel}
+	}
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "choose")),
-		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
-		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		confirm,
+		cancel,
 	}
 }
 
