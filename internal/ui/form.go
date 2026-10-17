@@ -33,6 +33,9 @@ var typeLabels = map[tree.Type]string{tree.All: "files & folders", tree.Dirs: "f
 // submitMsg is sent when the Search/Cancel button is pressed.
 type submitMsg struct{}
 
+// recallQueryMsg is sent when enter is pressed on a Saved row.
+type recallQueryMsg struct{ label string }
+
 // formModel is the search form in the left pane.
 type formModel struct {
 	roots, min, name textinput.Model
@@ -79,6 +82,26 @@ func (f *formModel) saveQuery(label string) error {
 	err := f.store.Save(label, queries.Query{Roots: v.roots, Min: v.min, Show: v.typ.String(), Name: v.name})
 	f.loadSaved()
 	return err
+}
+
+// recall fills the form with the query saved under label. The form holds
+// copies, so editing them leaves the saved query alone.
+func (f *formModel) recall(label string) error {
+	q, err := f.store.Load(label)
+	if err != nil {
+		return err
+	}
+	typ, err := tree.ParseType(q.Show)
+	if err != nil {
+		return err
+	}
+	f.roots.SetValue(q.Roots)
+	f.roots.CursorEnd()
+	f.suggest()
+	f.min.SetValue(q.Min)
+	f.name.SetValue(q.Name)
+	f.typ = typ
+	return nil
 }
 
 // deleteSaved removes the query saved under label and reloads the list.
@@ -309,6 +332,9 @@ func (f formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 		}
 		return f, f.syncFocus()
 	case "enter":
+		if l := f.savedSelection(); l != "" {
+			return f, func() tea.Msg { return recallQueryMsg{l} }
+		}
 		return f, func() tea.Msg { return submitMsg{} }
 	case "tab":
 		if f.canComplete() {

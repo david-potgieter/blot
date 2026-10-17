@@ -313,6 +313,66 @@ func TestSavedListReloadsAfterSaveAndDelete(t *testing.T) {
 	}
 }
 
+// pressEnterOnSaved moves from Folders to the first Saved row, presses enter
+// and delivers what that sends to the app.
+func pressEnterOnSaved(a *App) {
+	for range 5 {
+		a.Update(keyDown) // roots → first saved row
+	}
+	_, cmd := a.Update(keyEnter)
+	a.Update(cmd())
+}
+
+func TestEnterOnSavedRowRecallsAndScans(t *testing.T) {
+	dir := fixtureDir(t)
+	s := queries.Store{Path: filepath.Join(t.TempDir(), "queries.json")}
+	if err := s.Save("mids", queries.Query{Roots: dir, Min: "1MB", Show: "dirs", Name: "mid"}); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(t, Config{Roots: "~", Min: "500MB", Type: "all", Bin: t.TempDir(), Queries: s.Path})
+	pressEnterOnSaved(a)
+	if got := a.form.values(); got != (formValues{roots: dir, min: "1MB", name: "mid", typ: tree.Dirs}) {
+		t.Errorf("form = %+v", got)
+	}
+	if !a.scanning || a.focus != focusResults {
+		t.Fatalf("scanning=%v focus=%v, want a scan started", a.scanning, a.focus)
+	}
+	finish(t, a)
+	if got := strings.Join(names(a), ","); got != dir+",mid" {
+		t.Errorf("rows = %s", got)
+	}
+}
+
+func TestTweakingRecalledQueryLeavesItSaved(t *testing.T) {
+	dir := fixtureDir(t)
+	s := queries.Store{Path: filepath.Join(t.TempDir(), "queries.json")}
+	saved := queries.Query{Label: "mids", Roots: dir, Min: "1MB", Show: "all", Name: "mid"}
+	if err := s.Save(saved.Label, saved); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(t, Config{Roots: "~", Min: "500MB", Type: "all", Bin: t.TempDir(), Queries: s.Path})
+	pressEnterOnSaved(a)
+	finish(t, a)
+	a.Update(keyTab) // results → form, still on the Saved row
+	a.Update(keyUp)  // button
+	a.Update(keyUp)  // show
+	a.Update(keyUp)  // name
+	for range 3 {
+		a.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	for _, r := range "big" {
+		a.Update(press(string(r)))
+	}
+	a.Update(submitMsg{})
+	finish(t, a)
+	if got := strings.Join(names(a), ","); got != dir+",big" {
+		t.Errorf("rows = %s, want the tweaked name searched", got)
+	}
+	if got, _ := s.Load("mids"); got != saved {
+		t.Errorf("saved query = %+v, want unchanged %+v", got, saved)
+	}
+}
+
 func TestSavedListHiddenWhenNoQueries(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "queries.json")
 	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: missing})
