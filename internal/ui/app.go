@@ -18,6 +18,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/dustin/go-humanize"
 
+	"github.com/david-potgieter/blot/internal/queries"
 	"github.com/david-potgieter/blot/internal/scan"
 	"github.com/david-potgieter/blot/internal/size"
 	"github.com/david-potgieter/blot/internal/tree"
@@ -51,6 +52,7 @@ type Config struct {
 	Bin      string // Trash folder; defaults to ~/.Trash
 	Session  string // file the view is saved to on quit; "" disables saving
 	Restore  bool   // start from the saved session, if there is a usable one
+	Queries  string // saved queries file; "" shows no Saved list
 }
 
 type (
@@ -105,6 +107,8 @@ func New(cfg Config) (*App, error) {
 		styles: st,
 		isDark: true,
 	}
+	a.form.store = queries.Store{Path: cfg.Queries}
+	a.form.loadSaved()
 	if a.cfg.Bin == "" {
 		a.cfg.Bin = filepath.Join(a.tree.home, ".Trash")
 	}
@@ -202,6 +206,9 @@ func (a *App) restore(s *session) tea.Cmd {
 	a.form.min.SetValue(s.Min)
 	a.form.name.SetValue(s.Name)
 	a.form.typ, a.form.focus = s.Type, s.Field
+	if a.form.focus == fieldSaved && len(a.form.saved) == 0 {
+		a.form.focus = fieldButton // the list emptied since
+	}
 	if roots, err := unflatten(s.Nodes); err == nil && s.Scanned {
 		a.job = scan.Restore(roots, s.Totals, s.Floor)
 		a.jobID++

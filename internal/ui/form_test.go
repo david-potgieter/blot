@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/david-potgieter/blot/internal/queries"
 	"github.com/david-potgieter/blot/internal/tree"
 )
 
@@ -242,6 +243,83 @@ func writeFileT(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// savedQueries writes a queries file holding labels and returns its path.
+func savedQueries(t *testing.T, labels ...string) string {
+	t.Helper()
+	s := queries.Store{Path: filepath.Join(t.TempDir(), "queries.json")}
+	for _, l := range labels {
+		if err := s.Save(l, queries.Query{Roots: "~", Min: "1MB", Show: "all"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s.Path
+}
+
+func TestSavedListShownBelowSearch(t *testing.T) {
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: savedQueries(t, "photos", "builds")})
+	out := a.View().Content
+	btn, saved := strings.Index(out, "[ Search ]"), strings.Index(out, "Saved")
+	b, p := strings.Index(out, "builds"), strings.Index(out, "photos")
+	if !(btn >= 0 && btn < saved && saved < b && b < p) {
+		t.Errorf("want Saved, builds, photos below Search:\n%s", out)
+	}
+}
+
+func TestSavedListNavigation(t *testing.T) {
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: savedQueries(t, "a", "b")})
+	selected := func() string { return a.form.savedSelection() }
+	for range 4 {
+		a.Update(keyDown) // roots → button
+	}
+	if a.form.focus != fieldButton || selected() != "" {
+		t.Fatalf("focus = %d, want button", a.form.focus)
+	}
+	a.Update(keyDown)
+	if selected() != "a" {
+		t.Fatalf("down from button: selected %q, want a", selected())
+	}
+	a.Update(keyDown)
+	if selected() != "b" {
+		t.Fatalf("down in list: selected %q, want b", selected())
+	}
+	a.Update(keyUp)
+	a.Update(keyUp)
+	if a.form.focus != fieldButton || selected() != "" {
+		t.Fatalf("up from first row: focus = %d, want button", a.form.focus)
+	}
+	a.Update(keyDown)
+	a.Update(keyTab)
+	if a.focus != focusBin {
+		t.Errorf("tab from saved list: focus = %d, want bin", a.focus)
+	}
+}
+
+func TestSavedListHiddenWhenNoQueries(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "queries.json")
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: missing})
+	if out := a.View().Content; strings.Contains(out, "Saved") {
+		t.Errorf("Saved list shown with no queries file:\n%s", out)
+	}
+}
+
+func TestSavedListCorruptFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queries.json")
+	if err := os.WriteFile(path, []byte("{oops"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: path})
+	if out := a.form.View(); !strings.Contains(out, "corrupt queries file") { // unwrapped by the pane
+		t.Errorf("no error shown:\n%s", out)
+	}
+	a.Update(keyUp) // roots → wraps past the button
+	if a.form.focus != fieldButton {
+		t.Errorf("up from roots: focus = %d, want button (list is empty)", a.form.focus)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "{oops" {
+		t.Errorf("file rewritten: %q", data)
 	}
 }
 

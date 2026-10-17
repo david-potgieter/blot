@@ -39,6 +39,9 @@ func main() {
 	if cache, err := os.UserCacheDir(); err == nil {
 		cfg.Session = filepath.Join(cache, "blot", "session.gob.gz")
 	}
+	if p, err := queries.DefaultPath(); err == nil {
+		cfg.Queries = p
+	}
 	app, err := ui.New(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "blot:", err)
