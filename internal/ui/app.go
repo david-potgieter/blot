@@ -173,7 +173,7 @@ func (a *App) quit() tea.Cmd {
 // running is saved as cancelled, with what it has found so far.
 func (a *App) session() *session {
 	v := a.form.values()
-	s := &session{Version: sessionVersion, Roots: v.roots, Min: v.min, Type: v.typ, Field: a.form.focus, Focus: a.focus}
+	s := &session{Version: sessionVersion, Roots: v.roots, Min: v.min, Name: v.name, Type: v.typ, Field: a.form.focus, Focus: a.focus}
 	if a.job == nil {
 		return s
 	}
@@ -200,6 +200,7 @@ func (a *App) restore(s *session) tea.Cmd {
 	a.form.roots.SetValue(s.Roots)
 	a.form.suggest()
 	a.form.min.SetValue(s.Min)
+	a.form.name.SetValue(s.Name)
 	a.form.typ, a.form.focus = s.Type, s.Field
 	if roots, err := unflatten(s.Nodes); err == nil && s.Scanned {
 		a.job = scan.Restore(roots, s.Totals, s.Floor)

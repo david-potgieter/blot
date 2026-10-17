@@ -515,7 +515,7 @@ func TestQuitSavesAndPlainStartRestores(t *testing.T) {
 		t.Fatal("q should quit")
 	}
 
-	b := newApp(t, Config{Roots: "~", Min: "100MB", Type: "dirs", Session: path, Restore: true})
+	b := newApp(t, Config{Roots: "~", Min: "100MB", Type: "dirs", Name: "x", Session: path, Restore: true})
 	if b.job == nil || !b.restored {
 		t.Fatal("no results restored")
 	}
@@ -528,7 +528,7 @@ func TestQuitSavesAndPlainStartRestores(t *testing.T) {
 	if b.tree.tree.Sort() != tree.ByName || b.focus != focusResults {
 		t.Errorf("sort=%v focus=%d", b.tree.tree.Sort(), b.focus)
 	}
-	if b.form.roots.Value() != dir || b.form.min.Value() != "1MB" || b.form.typ != tree.All {
+	if b.form.roots.Value() != dir || b.form.min.Value() != "1MB" || b.form.name.Value() != "" || b.form.typ != tree.All {
 		t.Errorf("form = %+v", b.form.values())
 	}
 	if b.progress.Files != a.progress.Files || b.floor != a.floor || b.stale() {
@@ -548,6 +548,25 @@ func TestQuitSavesAndPlainStartRestores(t *testing.T) {
 	// Any paths or flags start fresh.
 	if c := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", Session: path}); c.job != nil {
 		t.Error("restored without Restore")
+	}
+}
+
+func TestPlainStartRestoresName(t *testing.T) {
+	dir := fixtureDir(t)
+	path := filepath.Join(t.TempDir(), "s")
+	a := newApp(t, Config{Roots: dir, Min: "1MB", Type: "all", Name: "MID", SkipForm: true, Session: path, Bin: t.TempDir()})
+	finish(t, a)
+	a.Update(press("q"))
+
+	b := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Session: path, Restore: true, Bin: t.TempDir()})
+	if b.form.name.Value() != "MID" {
+		t.Errorf("name = %q, want MID", b.form.name.Value())
+	}
+	if !slices.Equal(b.filter.NamePatterns, []string{"mid"}) {
+		t.Errorf("filter patterns = %v", b.filter.NamePatterns)
+	}
+	if got := strings.Join(names(b), ","); got != dir+",mid" {
+		t.Errorf("rows = %s", got)
 	}
 }
 

@@ -39,6 +39,7 @@ blot ~/Work ~/Code --min 500MB               # several folders at once
 | `--min` | `100MB` | minimum size (`500MB`, `1GiB`, …) |
 | `--type` | `all` | `all`, `dirs` or `files` |
 | `--name` | | only names matching these globs, comma-separated (`node_modules,.next`, `node_*`); case-insensitive |
+| `--query` | | load a saved query by label and scan immediately; other paths and flags override it for this run |
 | `--no-form` | off | start scanning immediately |
 | `--version` | | print the version |
 
