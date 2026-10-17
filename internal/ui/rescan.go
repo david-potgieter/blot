@@ -34,6 +34,26 @@ func (a *App) rescanDialog(n *scan.Node) *dialog {
 	}
 }
 
+// deleteQueryDialog asks before deleting the query saved under label. It
+// starts on "no", as deleting can't be undone. The form keeps focus, so it
+// lands back on the Saved list (or the button, once that's empty).
+func (a *App) deleteQueryDialog(label string) *dialog {
+	return &dialog{
+		title:   "Delete saved query",
+		body:    "Delete '" + label + "'?",
+		options: []string{"yes", "no"},
+		choice:  1,
+		onPick: func(choice int) tea.Cmd {
+			if choice == 0 {
+				if err := a.form.deleteSaved(label); err != nil {
+					a.form.savedErr = err // shown below the button
+				}
+			}
+			return nil
+		},
+	}
+}
+
 // accessDialog offers to open the Full Disk Access settings.
 func (a *App) accessDialog() *dialog {
 	return &dialog{

@@ -36,6 +36,9 @@ type submitMsg struct{}
 // recallQueryMsg is sent when enter is pressed on a Saved row.
 type recallQueryMsg struct{ label string }
 
+// deleteQueryMsg is sent when d, delete or backspace is pressed on a Saved row.
+type deleteQueryMsg struct{ label string }
+
 // formModel is the search form in the left pane.
 type formModel struct {
 	roots, min, name textinput.Model
@@ -336,6 +339,10 @@ func (f formModel) Update(msg tea.Msg) (formModel, tea.Cmd) {
 			return f, func() tea.Msg { return recallQueryMsg{l} }
 		}
 		return f, func() tea.Msg { return submitMsg{} }
+	case "d", "delete", "backspace":
+		if l := f.savedSelection(); l != "" {
+			return f, func() tea.Msg { return deleteQueryMsg{l} }
+		}
 	case "tab":
 		if f.canComplete() {
 			f.roots.SetValue(f.roots.CurrentSuggestion())
