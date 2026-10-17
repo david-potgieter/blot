@@ -14,16 +14,16 @@ import (
 )
 
 // sessionVersion changes whenever the saved format does; older files are ignored.
-const sessionVersion = 1
+const sessionVersion = 2
 
 // session is the whole view, saved on quit and restored on the next plain start.
 type session struct {
 	Version int
 
-	Roots, Min string // form, as typed
-	Type       tree.Type
-	Field      field
-	Focus      focus
+	Roots, Min, Name string // form, as typed
+	Type             tree.Type
+	Field            field
+	Focus            focus
 
 	// Results, when there were any.
 	Scanned   bool
