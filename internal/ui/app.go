@@ -477,6 +477,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "esc" && a.job != nil {
 				return a, a.setFocus(focusResults)
 			}
+			if msg.String() == "ctrl+s" && a.form.store.Path != "" {
+				var cmd tea.Cmd
+				a.dialog, cmd = a.saveDialog()
+				return a, cmd
+			}
 			var cmd tea.Cmd
 			a.form, cmd = a.form.Update(msg)
 			a.form.scanning = a.scanning && !a.stale()
@@ -604,7 +609,7 @@ func (a *App) View() tea.View {
 	bindings := formHelp(a.form.canComplete())
 	switch {
 	case a.dialog != nil:
-		bindings = dialogHelp()
+		bindings = dialogHelp(a.dialog.input != nil)
 	case a.focus == focusBin:
 		bindings = a.bin.ShortHelp()
 	case a.focus == focusResults:

@@ -313,6 +313,89 @@ func TestSavedListReloadsAfterSaveAndDelete(t *testing.T) {
 	}
 }
 
+var keyCtrlS = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+
+func TestCtrlSPrefillsName(t *testing.T) {
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Name: "node_modules", Bin: t.TempDir(), Queries: savedQueries(t)})
+	a.Update(keyCtrlS)
+	if a.dialog == nil || a.dialog.input == nil || a.dialog.input.Value() != "node_modules" {
+		t.Fatal("ctrl+s should open the save prompt prefilled with Name")
+	}
+	assertOverlay(t, a, "node_modules")
+}
+
+func TestCtrlSPrefillsFirstFolderWhenNameBlank(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	a := newApp(t, Config{Roots: filepath.Join(home, "Work") + ", /tmp", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: savedQueries(t)})
+	a.Update(keyCtrlS)
+	if a.dialog == nil || a.dialog.input.Value() != "~/Work" {
+		t.Fatalf("want prompt prefilled with ~/Work, got %+v", a.dialog)
+	}
+}
+
+// typeLabel replaces the save prompt's text with s.
+func typeLabel(a *App, s string) {
+	a.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	for _, r := range s {
+		a.Update(press(string(r)))
+	}
+}
+
+func TestCtrlSSavesQueryAndListsIt(t *testing.T) {
+	path := savedQueries(t, "a")
+	a := newApp(t, Config{Roots: "~", Min: "2MB", Type: "dirs", Name: "*.log", Bin: t.TempDir(), Queries: path})
+	a.Update(keyCtrlS)
+	typeLabel(a, "logs")
+	a.Update(keyEnter)
+	if a.dialog != nil {
+		t.Fatal("enter should close the prompt")
+	}
+	got, err := queries.Store{Path: path}.Load("logs")
+	if want := (queries.Query{Label: "logs", Roots: "~", Min: "2MB", Show: "dirs", Name: "*.log"}); err != nil || got != want {
+		t.Errorf("saved %+v (%v), want %+v", got, err, want)
+	}
+	if !strings.Contains(a.View().Content, "logs") || !slices.Equal(a.form.saved, []string{"a", "logs"}) {
+		t.Errorf("list not reloaded: %q", a.form.saved)
+	}
+}
+
+func TestCtrlSEscCancels(t *testing.T) {
+	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: savedQueries(t, "a")})
+	a.Update(keyCtrlS)
+	typeLabel(a, "q") // typed, not a quit
+	a.Update(keyEsc)
+	if a.dialog != nil || a.focus != focusForm || !slices.Equal(a.form.saved, []string{"a"}) {
+		t.Errorf("esc: dialog=%v focus=%d saved=%q", a.dialog, a.focus, a.form.saved)
+	}
+}
+
+func TestCtrlSAsksBeforeOverwriting(t *testing.T) {
+	path := savedQueries(t, "a") // saved with Min 1MB
+	a := newApp(t, Config{Roots: "~", Min: "5MB", Type: "all", Bin: t.TempDir(), Queries: path})
+	savedMin := func() string {
+		q, _ := queries.Store{Path: path}.Load("a")
+		return q.Min
+	}
+	a.Update(keyCtrlS)
+	typeLabel(a, "a")
+	a.Update(keyEnter)
+	if a.dialog == nil || !strings.Contains(a.View().Content, "Overwrite 'a'?") || savedMin() != "1MB" {
+		t.Fatal("saving over a label should ask first")
+	}
+	a.Update(keyRight) // No
+	a.Update(keyEnter)
+	if a.dialog != nil || savedMin() != "1MB" {
+		t.Fatal("no should cancel the save")
+	}
+	a.Update(keyCtrlS)
+	typeLabel(a, "a")
+	a.Update(keyEnter)
+	a.Update(keyEnter) // Yes
+	if a.dialog != nil || savedMin() != "5MB" {
+		t.Errorf("yes should replace the query: min = %s", savedMin())
+	}
+}
+
 func TestSavedListHiddenWhenNoQueries(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "queries.json")
 	a := newApp(t, Config{Roots: "~", Min: "1MB", Type: "all", Bin: t.TempDir(), Queries: missing})
