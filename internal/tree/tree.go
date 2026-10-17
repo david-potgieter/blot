@@ -120,7 +120,8 @@ func New(roots []*scan.Node, f Filter) *Tree {
 }
 
 // Rebuild is New with a sort order and expansion state carried over from a
-// previous tree (see ExpandedPaths). Roots not seen before start expanded.
+// previous tree (see ExpandedPaths). Roots not seen before start expanded;
+// with NamePatterns set, so do unseen context rows, while matches start collapsed.
 func Rebuild(roots []*scan.Node, f Filter, s SortBy, expanded map[string]bool) *Tree {
 	t := &Tree{roots: roots, filter: f, sort: s, kids: map[*scan.Node][]*scan.Node{}, expanded: map[string]bool{}}
 	for p, e := range expanded {
@@ -220,8 +221,14 @@ func (t *Tree) Rows() []Row {
 	var walk func(n *scan.Node, depth int)
 	walk = func(n *scan.Node, depth int) {
 		kids := t.kids[n]
-		exp := t.expanded[n.Path] && len(kids) > 0
-		rows = append(rows, Row{Node: n, Depth: depth, Expanded: exp, HasChildren: len(kids) > 0, Context: !t.filter.Matches(n)})
+		context := !t.filter.Matches(n)
+		exp, seen := t.expanded[n.Path]
+		if !seen {
+			// With Name set, open the way to every match but leave matches shut.
+			exp = context && len(t.filter.NamePatterns) > 0
+		}
+		exp = exp && len(kids) > 0
+		rows = append(rows, Row{Node: n, Depth: depth, Expanded: exp, HasChildren: len(kids) > 0, Context: context})
 		if exp {
 			for _, c := range kids {
 				walk(c, depth+1)
